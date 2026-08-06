@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Vorth — Read Without Limits</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ SPARKLE CANVAS (decorative, behind everything) ============ -->
+<canvas id="bg-sparkle" aria-hidden="true"></canvas>
+
+<!-- ============ TOP BAR (mobile logo + hamburger, hidden on desktop) ============ -->
+<header class="topbar">
+  <div class="topbar-logo glitter-text" data-text="VORTH">VORTH</div>
+  <button class="icon-btn" id="mobileMenuBtn" aria-label="Open menu">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+  </button>
+</header>
+
+<!-- ============ RIGHT-SIDE NAV (desktop) / SLIDE PANEL (mobile) ============ -->
+<nav class="sidenav" id="sidenav">
+  <div class="sidenav-logo glitter-text" data-text="VORTH">VORTH</div>
+
+  <button class="icon-btn nav-close" id="navCloseBtn" aria-label="Close menu">
+    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+  </button>
+
+  <div class="nav-links">
+    <button class="nav-item active" data-view="home">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z"/></svg>
+      <span>Home</span>
+    </button>
+    <button class="nav-item" data-view="browse">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>
+      <span>Browse</span>
+    </button>
+    <button class="nav-item" data-action="search">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M10 2a8 8 0 105.3 14.03l4.84 4.84 1.41-1.41-4.84-4.84A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
+      <span>Search</span>
+    </button>
+    <button class="nav-item" data-view="library">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h4v18l-2-1.4L4 21zm6 0h4v18l-2-1.4-2 1.4zm6 0h4v18l-2-1.4-2 1.4z"/></svg>
+      <span>Library</span>
+    </button>
+    <button class="nav-item" data-view="upload">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M11 3h2v10.17l3.59-3.58L18 11l-6 6-6-6 1.41-1.41L11 13.17z" transform="rotate(180 12 12)"/></svg>
+      <span>Upload</span>
+    </button>
+    <button class="nav-item" data-action="notifications">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 22a2.4 2.4 0 002.4-2.4h-4.8A2.4 2.4 0 0012 22zm7.2-6V11c0-3.5-1.87-6.44-5.16-7.22V3a2.04 2.04 0 10-4.08 0v.78C6.68 4.56 4.8 7.49 4.8 11v5l-2.4 2.4v1.2h19.2v-1.2z"/></svg>
+      <span>Alerts</span>
+      <span class="badge" id="notifBadge">0</span>
+    </button>
+    <button class="nav-item" data-view="profile" id="navProfileBtn">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a5 5 0 100-10 5 5 0 000 10zm0 2c-4.4 0-9 2.2-9 5v3h18v-3c0-2.8-4.6-5-9-5z"/></svg>
+      <span id="navProfileLabel">Sign in</span>
+    </button>
+  </div>
+
+  <div class="sidenav-foot">
+    <button class="theme-mini-toggle" id="chromeThemeBtn" title="Toggle site brightness">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36A5.4 5.4 0 0112 3z"/></svg>
+    </button>
+    <span>v1.0</span>
+  </div>
+</nav>
+<div class="nav-scrim" id="navScrim"></div>
+
+<!-- ============ SEARCH OVERLAY ============ -->
+<div class="search-overlay" id="searchOverlay">
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 2a8 8 0 105.3 14.03l4.84 4.84 1.41-1.41-4.84-4.84A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
+    <input type="text" id="searchInput" placeholder="Search titles, tags, authors…" autocomplete="off">
+    <button class="icon-btn" id="searchCloseBtn">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="search-suggest" id="searchSuggest"></div>
+</div>
+
+<!-- ============ NOTIFICATIONS PANEL ============ -->
+<aside class="notif-panel" id="notifPanel">
+  <div class="notif-head">
+    <h3>Notifications</h3>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button class="text-btn" id="notifMarkAllBtn">Mark all read</button>
+      <button class="icon-btn sm" id="notifCloseBtn" aria-label="Close notifications">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="notif-list" id="notifList"></div>
+</aside>
+
+<!-- ============ MAIN ============ -->
+<main class="main">
+
+  <!-- ---------- HOME ---------- -->
+  <section class="view active" id="view-home" data-view="home">
+    <div class="hero">
+      <div class="hero-glow"></div>
+      <p class="eyebrow">A place for stories, unbound</p>
+      <h1 class="hero-title glitter-text" data-text="VORTH">VORTH</h1>
+      <p class="hero-sub">Novels and comics from independent creators. Read at your own pace, in your own light.</p>
+      <div class="hero-actions">
+        <button id="startReadingBtn" class="btn btn-primary" data-view="library">Start reading</button>
+        <button class="btn btn-ghost" data-view="upload">Publish your work</button>
+      </div>
+    </div>
+
+    <div class="section-row">
+      <h2 class="section-title glitter-text" data-text="Continue reading">Continue reading</h2>
+    </div>
+    <div class="hcarousel" id="continueRow"><p class="empty-hint">Nothing in progress yet — open a title and start a chapter.</p></div>
+
+    <div class="section-row">
+      <h2 class="section-title glitter-text" data-text="Trending this week">Trending this week</h2>
+    </div>
+    <div class="hcarousel" id="trendingRow"></div>
+
+    <div class="section-row">
+      <h2 class="section-title glitter-text" data-text="Rankings">Rankings</h2>
+      <div class="tab-group" id="rankTabs">
+        <button class="tab active" data-range="daily">Daily</button>
+        <button class="tab" data-range="weekly">Weekly</button>
+        <button class="tab" data-range="alltime">All-time</button>
+      </div>
+    </div>
+    <ol class="rank-list" id="rankList"></ol>
+
+    <div class="section-row">
+      <h2 class="section-title glitter-text" data-text="Recommended for you">Recommended for you</h2>
+    </div>
+    <div class="card-grid" id="recommendedGrid"></div>
+
+    <div class="section-row">
+      <h2 class="section-title">Browse by genre</h2>
+    </div>
+    <div class="chip-row" id="genreChips"></div>
+  </section>
+
+  <!-- ---------- BROWSE / CATALOG ---------- -->
+  <section class="view" id="view-browse" data-view="browse">
+    <div class="view-head">
+      <h1 class="glitter-text" data-text="Browse">Browse</h1>
+      <p class="view-sub">Filter the catalog down to exactly what you're in the mood for.</p>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <label>Format</label>
+        <select id="filterType">
+          <option value="all">All</option>
+          <option value="novel">Novels</option>
+          <option value="comic">Comics</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Genre</label>
+        <select id="filterGenre"><option value="all">All genres</option></select>
+      </div>
+      <div class="filter-group">
+        <label>Status</label>
+        <select id="filterStatus">
+          <option value="all">All</option>
+          <option value="Ongoing">Ongoing</option>
+          <option value="Completed">Completed</option>
+          <option value="Hiatus">Hiatus</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Sort</label>
+        <select id="filterSort">
+          <option value="popular">Most popular</option>
+          <option value="rating">Highest rated</option>
+          <option value="newest">Newest chapters</option>
+          <option value="az">A–Z</option>
+        </select>
+      </div>
+      <button class="btn btn-ghost sm" id="filterReset">Reset</button>
+    </div>
+
+    <div class="chip-row" id="browseTagChips"></div>
+
+    <p class="result-count" id="browseCount"></p>
+    <div class="card-grid" id="browseGrid"></div>
+  </section>
+
+  <!-- ---------- SERIES DETAIL ---------- -->
+  <section class="view" id="view-detail" data-view="detail">
+    <div id="detailContent"></div>
+  </section>
+
+  <!-- ---------- NOVEL READER ---------- -->
+  <section class="view" id="view-reader-novel" data-view="reader-novel">
+    <div class="reader-topbar">
+      <button class="icon-btn" id="novelBackBtn" title="Back to series">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15 4l-8 8 8 8 1.4-1.4L9.8 12l6.6-6.6z"/></svg>
+      </button>
+      <div class="reader-title-block">
+        <span class="reader-series-title" id="novelSeriesTitle"></span>
+        <span class="reader-chapter-title" id="novelChapterTitle"></span>
+      </div>
+      <button class="icon-btn" id="novelSettingsBtn" title="Reader settings">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.7 7.7 0 000-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 00-1.7-1L14.9 3h-4l-.4 2.9a7.6 7.6 0 00-1.7 1l-2.5-1-2 3.5L6.4 11a7.7 7.7 0 000 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 001.7 1l.4 2.9h4l.4-2.9a7.6 7.6 0 001.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>
+      </button>
+      <button class="icon-btn" id="novelBookmarkBtn" title="Bookmark this spot">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 2h12a1 1 0 011 1v18l-7-4-7 4V3a1 1 0 011-1z"/></svg>
+      </button>
+    </div>
+
+    <div class="reader-progress-track"><div class="reader-progress-fill" id="novelProgressFill"></div></div>
+
+    <div class="novel-body" id="novelBody">
+      <div class="novel-text" id="novelText"></div>
+    </div>
+
+    <div class="reader-chapnav">
+      <button class="btn btn-ghost sm" id="novelPrevBtn">← Previous chapter</button>
+      <select id="novelChapterJump"></select>
+      <button class="btn btn-primary sm" id="novelNextBtn">Next chapter →</button>
+    </div>
+
+    <!-- settings drawer -->
+    <div class="reader-settings" id="novelSettings">
+      <h3>Reader settings</h3>
+      <div class="setting-row">
+        <label>Theme</label>
+        <div class="seg-control" id="novelThemeControl">
+          <button data-theme="dark" class="active">Dark</button>
+          <button data-theme="sepia">Sepia</button>
+          <button data-theme="light">Light</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Font</label>
+        <div class="seg-control" id="novelFontControl">
+          <button data-font="serif" class="active">Serif</button>
+          <button data-font="sans">Sans</button>
+          <button data-font="mono">Mono</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>Font size <span id="novelFontSizeVal">18px</span></label>
+        <input type="range" id="novelFontSize" min="14" max="28" value="18">
+      </div>
+      <div class="setting-row">
+        <label>Line spacing <span id="novelLineHeightVal">1.7</span></label>
+        <input type="range" id="novelLineHeight" min="12" max="24" value="17">
+      </div>
+      <div class="setting-row">
+        <label>Content width <span id="novelWidthVal">680px</span></label>
+        <input type="range" id="novelWidth" min="480" max="900" value="680" step="20">
+      </div>
+      <button class="btn btn-ghost sm" id="novelDownloadBtn">⭳ Save chapter for offline</button>
+    </div>
+  </section>
+
+  <!-- ---------- COMIC READER ---------- -->
+  <section class="view" id="view-reader-comic" data-view="reader-comic">
+    <div class="reader-topbar">
+      <button class="icon-btn" id="comicBackBtn" title="Back to series">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15 4l-8 8 8 8 1.4-1.4L9.8 12l6.6-6.6z"/></svg>
+      </button>
+      <div class="reader-title-block">
+        <span class="reader-series-title" id="comicSeriesTitle"></span>
+        <span class="reader-chapter-title" id="comicChapterTitle"></span>
+      </div>
+      <div class="comic-mode-toggle seg-control" id="comicModeControl">
+        <button data-mode="paginated" class="active">Paginated</button>
+        <button data-mode="vertical">Vertical</button>
+      </div>
+      <button class="icon-btn" id="comicBookmarkBtn" title="Bookmark this spot">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 2h12a1 1 0 011 1v18l-7-4-7 4V3a1 1 0 011-1z"/></svg>
+      </button>
+    </div>
+
+    <div class="reader-progress-track"><div class="reader-progress-fill" id="comicProgressFill"></div></div>
+
+    <div class="comic-toolbar">
+      <div class="zoom-control">
+        <button id="comicZoomOut" class="icon-btn sm">−</button>
+        <span id="comicZoomVal">100%</span>
+        <button id="comicZoomIn" class="icon-btn sm">+</button>
+      </div>
+      <span class="comic-page-indicator" id="comicPageIndicator">Page 1 / 1</span>
+      <button class="btn btn-ghost sm" id="comicDownloadBtn">⭳ Save chapter for offline</button>
+    </div>
+
+    <div class="comic-viewport" id="comicViewport">
+      <button class="comic-nav-arrow left" id="comicPrevPageBtn" aria-label="Previous page">‹</button>
+      <div class="comic-pages" id="comicPages"></div>
+      <button class="comic-nav-arrow right" id="comicNextPageBtn" aria-label="Next page">›</button>
+    </div>
+
+    <div class="reader-chapnav">
+      <button class="btn btn-ghost sm" id="comicPrevChBtn">← Previous chapter</button>
+      <select id="comicChapterJump"></select>
+      <button class="btn btn-primary sm" id="comicNextChBtn">Next chapter →</button>
+    </div>
+  </section>
+
+  <!-- ---------- LIBRARY ---------- -->
+  <section class="view" id="view-library" data-view="library">
+    <div class="view-head">
+      <h1 class="glitter-text" data-text="Your library">Your library</h1>
+      <p class="view-sub">Saved series, reading progress, and offline chapters.</p>
+    </div>
+    <div class="tab-group" id="libraryTabs">
+      <button class="tab active" data-lib="saved">Saved</button>
+      <button class="tab" data-lib="history">Reading history</button>
+      <button class="tab" data-lib="downloads">Offline downloads</button>
+    </div>
+    <div class="card-grid" id="libraryGrid"></div>
+  </section>
+
+  <!-- ---------- PROFILE / AUTH ---------- -->
+  <section class="view" id="view-profile" data-view="profile">
+    <div id="profileLoggedOut" class="auth-wrap">
+      <div class="auth-card">
+        <h1 class="glitter-text" data-text="Welcome to Vorth">Welcome to Vorth</h1>
+        <p class="view-sub">Sign in to save your library, sync progress, and comment on series.</p>
+        <div class="tab-group" id="authTabs">
+          <button class="tab active" data-auth="login">Sign in</button>
+          <button class="tab" data-auth="signup">Create account</button>
+        </div>
+        <form id="loginForm" class="auth-form">
+          <label>Username or email<input type="text" id="loginIdentifier" required placeholder="e.g. moonlit_reader"></label>
+          <label>Password<input type="password" id="loginPassword" required placeholder="••••••••"></label>
+          <button type="submit" class="btn btn-primary">Sign in</button>
+          <p class="form-hint" id="loginHint"></p>
+        </form>
+        <form id="signupForm" class="auth-form hidden">
+          <label>Display name<input type="text" id="signupName" required placeholder="How others see you"></label>
+          <label>Username<input type="text" id="signupUsername" required placeholder="Unique, no spaces"></label>
+          <label>Email<input type="email" id="signupEmail" required placeholder="you@example.com"></label>
+          <label>Password<input type="password" id="signupPassword" required placeholder="••••••••"></label>
+          <label>Confirm password<input type="password" id="signupConfirmPassword" required placeholder="••••••••"></label>
+          <label class="upload-file-wrap">
+            <span>Profile picture</span>
+            <div class="upload-file-picker">
+              <button type="button" class="btn btn-ghost sm upload-file-trigger" id="signupPicTrigger">Choose image</button>
+              <span class="upload-file-name" id="signupPicName">No image selected</span>
+              <input type="file" id="signupPicInput" accept="image/*" hidden>
+            </div>
+            <div class="avatar-preview" id="signupPicPreview"></div>
+          </label>
+          <label class="checkbox-row"><input type="checkbox" id="signupTerms" required> I agree to the <a href="#" data-legal="terms">Terms of Service</a> and <a href="#" data-legal="content">Content Policy</a>.</label>
+          <label class="checkbox-row"><input type="checkbox" id="signupAge" required> I confirm I meet the minimum age requirement.</label>
+          <button type="submit" class="btn btn-primary">Create account</button>
+          <p class="form-hint" id="signupHint"></p>
+        </form>
+      </div>
+    </div>
+
+    <div id="profileLoggedIn" class="hidden">
+      <div class="profile-head">
+        <div class="avatar-ring" id="profileAvatar"></div>
+        <div>
+          <h1 id="profileName" class="glitter-text"></h1>
+          <p class="view-sub" id="profileMeta"></p>
+        </div>
+        <button class="btn btn-ghost sm" id="logoutBtn">Sign out</button>
+      </div>
+      <div class="stat-row" id="profileStats"></div>
+      <div class="section-row"><h2 class="section-title">Reading history</h2></div>
+      <div class="card-grid" id="profileHistoryGrid"></div>
+    </div>
+  </section>
+
+  <!-- ---------- UPLOAD / CREATOR STUDIO ---------- -->
+  <section class="view" id="view-upload" data-view="upload">
+    <div class="view-head">
+      <h1 class="glitter-text" data-text="Creator studio">Creator studio</h1>
+      <p class="view-sub">Publish a new series, or add a chapter to one you already run.</p>
+    </div>
+
+    <div class="tab-group" id="uploadTabs">
+      <button class="tab active" data-upload="series">New series</button>
+      <button class="tab" data-upload="chapter">New chapter</button>
+    </div>
+
+    <form id="seriesForm" class="upload-form">
+      <div class="upload-grid">
+        <label class="cover-drop" id="coverDrop" for="coverInput" tabindex="0" aria-label="Upload a book cover image">
+          <input type="file" id="coverInput" accept="image/*" hidden>
+          <span>Cover art</span>
+          <small>Click to upload a cover photo</small>
+          <span class="cover-drop-preview-title" id="coverDropTitle">Book cover preview</span>
+        </label>
+        <div class="upload-fields">
+          <label>Title<input type="text" id="upTitle" required placeholder="The name of your series"></label>
+          <div class="two-col">
+            <label>Format
+              <select id="upType"><option value="novel">Novel</option><option value="comic">Comic / Manga</option></select>
+            </label>
+            <label>Status
+              <select id="upStatus"><option>Ongoing</option><option>Completed</option><option>Hiatus</option></select>
+            </label>
+          </div>
+          <label>Author<input type="text" id="upAuthor" required placeholder="Author name"></label>
+          <label>Artist <small>(comics only)</small><input type="text" id="upArtist" placeholder="Artist name"></label>
+          <label>Genres <small>comma separated</small><input type="text" id="upGenres" placeholder="Fantasy, Romance…"></label>
+          <label>Tags <small>comma separated</small><input type="text" id="upTags" placeholder="slow burn, isekai…"></label>
+          <label>Synopsis<textarea id="upSynopsis" rows="4" required placeholder="What's this story about?"></textarea></label>
+          <label class="checkbox-row"><input type="checkbox" id="upRightsAttested" required> I own the rights to this work, or have permission to publish it.</label>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Publish series</button>
+      <p class="form-hint" id="seriesFormHint"></p>
+    </form>
+
+    <form id="chapterForm" class="upload-form hidden">
+      <label>Series<select id="upSeriesSelect"></select></label>
+      <label>Chapter title<input type="text" id="upChapterTitle" required placeholder="e.g. The Fallen Throne"></label>
+      <label id="upChapterParagraphsWrap">Novel content<textarea id="upChapterParagraphs" rows="8" placeholder="Paste paragraphs here. Blank lines split into separate paragraphs."></textarea></label>
+      <label id="upChapterPagesWrap" class="hidden">
+        <span>Page images</span>
+        <div class="upload-file-picker">
+          <input type="file" id="upChapterPagesInput" accept="image/*" multiple hidden>
+          <span class="btn btn-ghost sm upload-file-trigger">Choose images</span>
+          <span class="upload-file-name" id="upChapterPdfName">No files selected</span>
+        </div>
+      </label>
+      <button type="submit" class="btn btn-primary">Publish chapter</button>
+      <p class="form-hint" id="chapterFormHint"></p>
+    </form>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
