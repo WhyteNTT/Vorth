@@ -13,6 +13,12 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const ApiError = require('./utils/ApiError');
 
 const app = express();
+const frontendRoot = path.join(__dirname, '../../');
+const allowedOrigins = new Set([
+  ...env.clientOrigins,
+  `http://localhost:${env.port}`,
+  `http://127.0.0.1:${env.port}`,
+]);
 
 // --- security & parsing ---
 app.use(helmet({
@@ -41,7 +47,7 @@ app.use(
         }
         return callback(null, true);
       }
-      if (env.clientOrigins.includes(origin)) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
       return callback(ApiError.forbidden('This origin is not permitted.'));
     },
     credentials: true,
@@ -52,11 +58,10 @@ app.use('/api', generalLimiter);
 
 // --- static file serving for uploaded covers/pages ---
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use(express.static(frontendRoot));
 
 // --- routes ---
-app.get('/', (req, res) => {
-  res.json({ success: true, message: 'Vorth API is running. See /api/health and /api/legal for details.' });
-});
+app.get('/', (req, res) => res.sendFile(path.join(frontendRoot, 'index.html')));
 app.use('/api', routes);
 
 // --- error handling (must be last) ---
