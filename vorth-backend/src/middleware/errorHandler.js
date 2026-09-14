@@ -11,24 +11,22 @@ function errorHandler(err, req, res, next) {
   let message = err.message || 'Internal server error';
   let details = err.details || null;
 
-  // Mongoose validation errors
   if (err.name === 'ValidationError') {
     statusCode = 400;
     details = Object.values(err.errors).map((e) => ({ field: e.path, message: e.message }));
     message = 'Validation failed';
   }
 
-  // Mongoose bad ObjectId
-  if (err.name === 'CastError') {
+  // PostgreSQL invalid UUID
+  if (err.code === '22P02') {
     statusCode = 400;
-    message = `Invalid value for ${err.path}`;
+    message = 'Invalid identifier.';
   }
 
-  // Mongo duplicate key
-  if (err.code === 11000) {
+  // PostgreSQL unique constraint violation
+  if (err.code === '23505') {
     statusCode = 409;
-    const field = Object.keys(err.keyPattern || {})[0] || 'field';
-    message = `That ${field} is already in use.`;
+    message = 'That value is already in use.';
   }
 
   // Multer file upload errors

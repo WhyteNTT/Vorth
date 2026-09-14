@@ -32,7 +32,7 @@ const list = asyncHandler(async (req, res) => {
 const createValidators = [
   body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be 1-5'),
   body('text').trim().notEmpty().withMessage('Review text is required').isLength({ max: 1000 }),
-  body('parent').optional({ nullable: true }).isMongoId(),
+  body('parent').optional({ nullable: true }).isUUID(),
 ];
 
 const create = [

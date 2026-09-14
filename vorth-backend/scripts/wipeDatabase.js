@@ -16,7 +16,7 @@ const Series = require('../src/models/Series');
 const Chapter = require('../src/models/Chapter');
 const Comment = require('../src/models/Comment');
 const User = require('../src/models/User');
-const mongoose = require('mongoose');
+const { pool } = require('../src/config/db');
 
 async function run() {
   const args = process.argv.slice(2);
@@ -43,7 +43,7 @@ async function run() {
   }
 
   console.log('Done. The catalog is now empty — no mock books remain.');
-  await mongoose.connection.close();
+  await pool.end();
   process.exit(0);
 }
 

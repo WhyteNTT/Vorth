@@ -1,7 +1,7 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
-const REQUIRED_VARS = ['MONGO_URI', 'JWT_SECRET'];
+const REQUIRED_VARS = ['DATABASE_URL', 'JWT_SECRET'];
 
 function requireEnv() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
@@ -19,7 +19,8 @@ requireEnv();
 module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT, 10) || 5000,
-  mongoUri: process.env.MONGO_URI,
+  databaseUrl: process.env.DATABASE_URL,
+  databaseSsl: process.env.DATABASE_SSL !== 'false',
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   clientOrigins: (process.env.CLIENT_ORIGINS || '')

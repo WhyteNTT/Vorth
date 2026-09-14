@@ -1,6 +1,6 @@
 # Vorth Backend
 
-Node.js + Express + MongoDB API for the Vorth novel/comic reading
+Node.js + Express + PostgreSQL API for the Vorth novel/comic reading
 platform. Ships with **no mock or seed data** — the catalog is empty
 until a real user publishes something.
 
@@ -18,13 +18,14 @@ until a real user publishes something.
 cd vorth-backend
 npm install
 cp .env.example .env
-# edit .env — at minimum set MONGO_URI and JWT_SECRET
+# edit .env — at minimum set DATABASE_URL and JWT_SECRET
 npm run dev        # nodemon, auto-restarts on change
 # or
 npm start          # plain node
 ```
 
-Requires Node 18+ and a running MongoDB instance (local or Atlas).
+Requires Node 18+ and a PostgreSQL database. Neon is supported through
+`DATABASE_URL` and SSL by default.
 
 If you were previously running an earlier prototype with mock books,
 clear it with:
@@ -41,7 +42,7 @@ src/
   app.js                   Express app: security middleware, routes, error handling
   config/
     env.js                 loads & validates environment variables
-    db.js                  Mongoose connection
+    db.js                      PostgreSQL connection and schema bootstrap
   models/                  User, Series, Chapter, Comment, ReadingProgress, Notification, DMCAReport
   controllers/              request handlers, one file per resource
   routes/                   route definitions, mounted under /api in routes/index.js
@@ -180,8 +181,8 @@ There's no signup flow for admins on purpose. After registering a
 normal account, promote it manually:
 
 ```js
-// mongo shell / Compass
-db.users.updateOne({ username: "your_username" }, { $set: { role: "admin" } })
+-- PostgreSQL / Neon SQL console
+UPDATE users SET role = 'admin' WHERE username = 'your_username';
 ```
 
 ## 7. Known limitations / what's next

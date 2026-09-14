@@ -20,8 +20,8 @@ const submitValidators = [
     .trim().notEmpty().withMessage('Please describe the copyrighted work').isLength({ max: 2000 }),
   body('originalWorkUrl').optional({ nullable: true, checkFalsy: true }).trim()
     .isURL({ protocols: ['http', 'https'], require_protocol: true }).isLength({ max: 500 }),
-  body('infringingSeries').optional({ nullable: true }).isMongoId(),
-  body('infringingChapter').optional({ nullable: true }).isMongoId(),
+  body('infringingSeries').optional({ nullable: true }).isUUID(),
+  body('infringingChapter').optional({ nullable: true }).isUUID(),
   body('infringingUrlDescription').optional({ nullable: true }).trim().isLength({ max: 500 }),
   body('goodFaithStatement').custom((value) => value === true || value === 'true')
     .withMessage('The good-faith statement must be affirmed'),

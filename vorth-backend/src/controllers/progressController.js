@@ -26,8 +26,8 @@ const getForSeries = asyncHandler(async (req, res) => {
 // PUT /api/progress/:seriesId — upsert resume position. Called on scroll
 // (novel) or page turn (comic), and again when explicitly bookmarking.
 const upsertValidators = [
-  param('seriesId').isMongoId().withMessage('A valid seriesId is required'),
-  body('chapterId').isMongoId().withMessage('A valid chapterId is required'),
+  param('seriesId').isUUID().withMessage('A valid seriesId is required'),
+  body('chapterId').isUUID().withMessage('A valid chapterId is required'),
   body('scrollPct').optional().isFloat({ min: 0, max: 1 }),
   body('page').optional().isInt({ min: 0 }),
   body('bookmarked').optional().isBoolean(),
@@ -65,7 +65,7 @@ const upsert = [
 ];
 
 const seriesParamValidators = [
-  param('seriesId').isMongoId().withMessage('A valid seriesId is required'),
+  param('seriesId').isUUID().withMessage('A valid seriesId is required'),
   asyncHandler(async (req, res, next) => {
     throwIfInvalid(req);
     next();

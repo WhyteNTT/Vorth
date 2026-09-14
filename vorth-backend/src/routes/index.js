@@ -1,5 +1,5 @@
 const express = require('express');
-const mongoose = require('mongoose');
+const { pool } = require('../config/db');
 
 const router = express.Router();
 
@@ -16,8 +16,9 @@ router.use('/admin', require('./adminRoutes'));
 router.use('/legal', require('./legalRoutes'));
 
 router.get('/', (req, res) => res.json({ success: true, message: 'Vorth API is running. Use /api/health for status.' }));
-router.get('/health', (req, res) => {
-  const database = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+router.get('/health', async (req, res) => {
+  let database = 'connected';
+  try { await pool.query('SELECT 1'); } catch (_) { database = 'disconnected'; }
   res.status(database === 'connected' ? 200 : 503).json({
     success: database === 'connected',
     status: database === 'connected' ? 'ok' : 'degraded',

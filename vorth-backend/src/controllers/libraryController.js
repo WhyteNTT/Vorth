@@ -47,8 +47,8 @@ const getDownloads = asyncHandler(async (req, res) => {
 // Note: this endpoint records intent/metadata only. Actual offline asset
 // caching (service worker, IndexedDB, etc.) is a frontend concern.
 const addDownload = [
-  body('seriesId').isMongoId().withMessage('A valid seriesId is required'),
-  body('chapterId').isMongoId().withMessage('A valid chapterId is required'),
+  body('seriesId').isUUID().withMessage('A valid seriesId is required'),
+  body('chapterId').isUUID().withMessage('A valid chapterId is required'),
   asyncHandler(async (req, res) => {
   throwIfInvalid(req);
   const { seriesId, chapterId } = req.body;
