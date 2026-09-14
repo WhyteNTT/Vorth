@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 
 const router = express.Router();
 
@@ -15,6 +16,14 @@ router.use('/admin', require('./adminRoutes'));
 router.use('/legal', require('./legalRoutes'));
 
 router.get('/', (req, res) => res.json({ success: true, message: 'Vorth API is running. Use /api/health for status.' }));
-router.get('/health', (req, res) => res.json({ success: true, status: 'ok', time: new Date().toISOString() }));
+router.get('/health', (req, res) => {
+  const database = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  res.status(database === 'connected' ? 200 : 503).json({
+    success: database === 'connected',
+    status: database === 'connected' ? 'ok' : 'degraded',
+    database,
+    time: new Date().toISOString(),
+  });
+});
 
 module.exports = router;

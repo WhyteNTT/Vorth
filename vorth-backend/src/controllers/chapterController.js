@@ -90,9 +90,17 @@ const update = [
   asyncHandler(async (req, res) => {
     throwIfInvalid(req);
     const { title, paragraphs, pages } = req.body;
+    const nextParagraphs = paragraphs !== undefined ? paragraphs : req.chapter.paragraphs;
+    const nextPages = pages !== undefined ? pages : req.chapter.pages;
+    if (req.series.type === 'novel' && (pages !== undefined || !nextParagraphs || !nextParagraphs.length)) {
+      throw ApiError.badRequest('Novel chapters need at least one paragraph and cannot contain comic pages.');
+    }
+    if (req.series.type === 'comic' && (paragraphs !== undefined || !nextPages || !nextPages.length)) {
+      throw ApiError.badRequest('Comic chapters need at least one page and cannot contain novel paragraphs.');
+    }
     if (title !== undefined) req.chapter.title = title;
-    if (paragraphs !== undefined) req.chapter.paragraphs = paragraphs;
-    if (pages !== undefined) req.chapter.pages = pages;
+    if (req.series.type === 'novel' && paragraphs !== undefined) req.chapter.paragraphs = paragraphs;
+    if (req.series.type === 'comic' && pages !== undefined) req.chapter.pages = pages;
     await req.chapter.save();
     res.json({ success: true, chapter: req.chapter });
   }),

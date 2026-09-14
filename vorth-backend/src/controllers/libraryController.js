@@ -1,5 +1,7 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
+const { body } = require('express-validator');
+const throwIfInvalid = require('../utils/validate');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
 const User = require('../models/User');
@@ -44,7 +46,11 @@ const getDownloads = asyncHandler(async (req, res) => {
 // POST /api/library/downloads — mark a chapter for offline reading.
 // Note: this endpoint records intent/metadata only. Actual offline asset
 // caching (service worker, IndexedDB, etc.) is a frontend concern.
-const addDownload = asyncHandler(async (req, res) => {
+const addDownload = [
+  body('seriesId').isMongoId().withMessage('A valid seriesId is required'),
+  body('chapterId').isMongoId().withMessage('A valid chapterId is required'),
+  asyncHandler(async (req, res) => {
+  throwIfInvalid(req);
   const { seriesId, chapterId } = req.body;
   const [series, chapter] = await Promise.all([
     Series.findById(seriesId),
@@ -63,7 +69,8 @@ const addDownload = asyncHandler(async (req, res) => {
     await req.user.save();
   }
   res.status(201).json({ success: true, downloads: req.user.downloads });
-});
+  }),
+];
 
 // DELETE /api/library/downloads/:chapterId
 const removeDownload = asyncHandler(async (req, res) => {

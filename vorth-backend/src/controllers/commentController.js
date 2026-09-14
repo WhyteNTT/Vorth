@@ -20,6 +20,8 @@ async function recomputeRating(seriesId) {
 
 // GET /api/series/:seriesId/comments
 const list = asyncHandler(async (req, res) => {
+  const series = await Series.findById(req.params.seriesId).select('isRemoved');
+  if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
   const comments = await Comment.find({ series: req.params.seriesId, isRemoved: false })
     .sort({ createdAt: -1 })
     .populate('user', 'username displayName');
@@ -41,6 +43,14 @@ const create = [
     if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
 
     const { rating, text, parent } = req.body;
+    if (parent) {
+      const parentComment = await Comment.findOne({
+        _id: parent,
+        series: series._id,
+        isRemoved: false,
+      }).select('user');
+      if (!parentComment) throw ApiError.badRequest('The parent comment is not part of this series.');
+    }
     const comment = await Comment.create({
       series: series._id,
       user: req.user.id,

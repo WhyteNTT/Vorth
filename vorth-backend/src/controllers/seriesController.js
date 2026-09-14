@@ -13,6 +13,9 @@ const MAX_PAGE_SIZE = 48;
 const listValidators = [
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: MAX_PAGE_SIZE }).toInt(),
+  query('type').optional().isIn(['novel', 'comic']),
+  query('status').optional().isIn(['Ongoing', 'Completed', 'Hiatus']),
+  query('sort').optional().isIn(['popular', 'rating', 'newest', 'az']),
 ];
 
 const list = [
@@ -95,7 +98,7 @@ const createValidators = [
   body('status').optional().isIn(['Ongoing', 'Completed', 'Hiatus']),
   body('synopsis').trim().notEmpty().withMessage('Synopsis is required').isLength({ max: 2000 }),
   body('coverImage').optional({ nullable: true }).isString(),
-  body('rightsAttested').equals('true').withMessage(
+  body('rightsAttested').custom((value) => value === true || value === 'true').withMessage(
     'You must confirm you own the rights to this work, or have permission to publish it, before it can go live.'
   ),
 ];

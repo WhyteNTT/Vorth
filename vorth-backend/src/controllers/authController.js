@@ -13,8 +13,10 @@ const registerValidators = [
     .matches(/^[a-z0-9_]{3,24}$/).withMessage('Username must be 3-24 characters: lowercase letters, numbers, underscores'),
   body('email').trim().isEmail().withMessage('A valid email is required').normalizeEmail(),
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-  body('agreedToTerms').equals('true').withMessage('You must agree to the Terms of Service and Content Policy'),
-  body('ageConfirmed').equals('true').withMessage(`You must confirm you are at least ${env.minimumUserAge} years old`),
+  body('agreedToTerms').custom((value) => value === true || value === 'true')
+    .withMessage('You must agree to the Terms of Service and Content Policy'),
+  body('ageConfirmed').custom((value) => value === true || value === 'true')
+    .withMessage(`You must confirm you are at least ${env.minimumUserAge} years old`),
 ];
 
 const register = [

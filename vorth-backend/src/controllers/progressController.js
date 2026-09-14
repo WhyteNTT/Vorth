@@ -1,4 +1,4 @@
-const { body } = require('express-validator');
+const { body, param } = require('express-validator');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
@@ -26,6 +26,7 @@ const getForSeries = asyncHandler(async (req, res) => {
 // PUT /api/progress/:seriesId — upsert resume position. Called on scroll
 // (novel) or page turn (comic), and again when explicitly bookmarking.
 const upsertValidators = [
+  param('seriesId').isMongoId().withMessage('A valid seriesId is required'),
   body('chapterId').isMongoId().withMessage('A valid chapterId is required'),
   body('scrollPct').optional().isFloat({ min: 0, max: 1 }),
   body('page').optional().isInt({ min: 0 }),
@@ -63,10 +64,18 @@ const upsert = [
   }),
 ];
 
+const seriesParamValidators = [
+  param('seriesId').isMongoId().withMessage('A valid seriesId is required'),
+  asyncHandler(async (req, res, next) => {
+    throwIfInvalid(req);
+    next();
+  }),
+];
+
 // DELETE /api/progress/:seriesId — clear resume position for a series.
 const remove = asyncHandler(async (req, res) => {
   await ReadingProgress.findOneAndDelete({ user: req.user.id, series: req.params.seriesId });
   res.json({ success: true, message: 'Progress cleared.' });
 });
 
-module.exports = { list, getForSeries, upsert, remove };
+module.exports = { list, getForSeries: [...seriesParamValidators, getForSeries], upsert, remove: seriesParamValidators.concat(remove) };

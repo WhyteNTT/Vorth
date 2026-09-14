@@ -1,13 +1,16 @@
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const env = require('../config/env');
 const ApiError = require('../utils/ApiError');
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
+const uploadDirectory = path.join(__dirname, '..', '..', 'uploads');
+fs.mkdirSync(uploadDirectory, { recursive: true });
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(__dirname, '..', '..', 'uploads')),
+  destination: (req, file, cb) => cb(null, uploadDirectory),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     const unique = crypto.randomBytes(12).toString('hex');

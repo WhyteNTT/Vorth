@@ -18,12 +18,15 @@ const submitValidators = [
   body('reporterAddress').optional({ nullable: true }).trim().isLength({ max: 300 }),
   body('copyrightedWorkDescription')
     .trim().notEmpty().withMessage('Please describe the copyrighted work').isLength({ max: 2000 }),
-  body('originalWorkUrl').optional({ nullable: true }).trim().isLength({ max: 500 }),
+  body('originalWorkUrl').optional({ nullable: true, checkFalsy: true }).trim()
+    .isURL({ protocols: ['http', 'https'], require_protocol: true }).isLength({ max: 500 }),
   body('infringingSeries').optional({ nullable: true }).isMongoId(),
   body('infringingChapter').optional({ nullable: true }).isMongoId(),
   body('infringingUrlDescription').optional({ nullable: true }).trim().isLength({ max: 500 }),
-  body('goodFaithStatement').equals('true').withMessage('The good-faith statement must be affirmed'),
-  body('accuracyStatement').equals('true').withMessage('The accuracy/perjury statement must be affirmed'),
+  body('goodFaithStatement').custom((value) => value === true || value === 'true')
+    .withMessage('The good-faith statement must be affirmed'),
+  body('accuracyStatement').custom((value) => value === true || value === 'true')
+    .withMessage('The accuracy/perjury statement must be affirmed'),
   body('signature').trim().notEmpty().withMessage('A typed signature is required').isLength({ max: 120 }),
 ];
 
@@ -31,6 +34,17 @@ const submit = [
   ...submitValidators,
   asyncHandler(async (req, res) => {
     throwIfInvalid(req);
+    if (req.body.infringingChapter) {
+      const chapter = await Chapter.findById(req.body.infringingChapter).select('series isRemoved');
+      if (!chapter || chapter.isRemoved) throw ApiError.notFound('Infringing chapter not found.');
+      if (req.body.infringingSeries && chapter.series.toString() !== req.body.infringingSeries) {
+        throw ApiError.badRequest('The infringing chapter does not belong to the selected series.');
+      }
+    }
+    if (req.body.infringingSeries) {
+      const series = await Series.findById(req.body.infringingSeries).select('isRemoved');
+      if (!series || series.isRemoved) throw ApiError.notFound('Infringing series not found.');
+    }
     const report = await DMCAReport.create(req.body);
     res.status(201).json({
       success: true,

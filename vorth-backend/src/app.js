@@ -13,7 +13,7 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const ApiError = require('./utils/ApiError');
 
 const app = express();
-const frontendRoot = path.join(__dirname, '../../../');
+const frontendRoot = path.join(__dirname, '../../vorth-frontend');
 const allowedOrigins = new Set([
   ...env.clientOrigins,
   `http://localhost:${env.port}`,
