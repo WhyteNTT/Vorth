@@ -68,7 +68,9 @@ class Query {
 
 class BaseModel {
   static table; static json = [];
-  static _all = async () => (await pool.query(`SELECT * FROM ${this.table}`)).rows.map(mapRow);
+  static async _all() {
+    return (await pool.query(`SELECT * FROM ${this.table}`)).rows.map(mapRow);
+  }
   static _hydrate(row, opts = {}) {
     if (!row) return null;
     const obj = Object.assign(new this(), row);
