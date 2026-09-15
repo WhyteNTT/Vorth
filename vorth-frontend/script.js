@@ -1,9 +1,9 @@
 /* =========================================================
    VORTH — API-backed frontend
    ========================================================= */
-const API_BASE = window.location.protocol === 'http:' || window.location.protocol === 'https:'
-  ? `${window.location.origin}/api`
-  : 'http://localhost:5000/api';
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5000/api'
+  : 'https://vorth.onrender.com/api';
 const TOKEN_STORAGE_KEY = 'vorth_token';
 const GENRES = ['Fantasy','Romance','Sci-Fi','Horror','Mystery','Action','Drama','Isekai','Slice of Life'];
 const GLYPH = { Fantasy:'⚔', Romance:'❦', 'Sci-Fi':'✦', Horror:'☠', Mystery:'✧', Action:'⚡', Drama:'❂', Isekai:'☾', 'Slice of Life':'❈' };
