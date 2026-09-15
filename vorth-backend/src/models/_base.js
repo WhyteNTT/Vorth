@@ -133,7 +133,7 @@ class BaseModel {
     return mapRow(result.rows[0]);
   }
   async save() {
-    const keys = Object.keys(this).filter((k) => !['_id', 'id'].includes(k) && this[k] !== undefined);
+    const keys = Object.keys(this).filter((k) => !['_id', 'id', 'updatedAt', 'updated_at'].includes(k) && this[k] !== undefined);
     const vals = keys.map((k) => this.constructor.json.includes(k) ? JSON.stringify(this[k]) : this[k]);
     vals.push(this.id);
     const r = await pool.query(`UPDATE ${this.constructor.table} SET ${keys.map((k, i) => `${snake(k)}=$${i + 1}`).join(',')},updated_at=now() WHERE id=$${vals.length} RETURNING *`, vals);
