@@ -140,6 +140,10 @@ class BaseModel {
     Object.assign(this, mapRow(r.rows[0])); this._id = this.id; return this;
   }
   toObject() { return { ...this }; }
+  async populate(path, fields) {
+    await this.constructor._populate(this, { populate: [{ path, fields }] });
+    return this;
+  }
   toSafeObject() { const o = this.toObject(); delete o.password; delete o._id; return o; }
 }
 module.exports = BaseModel;
