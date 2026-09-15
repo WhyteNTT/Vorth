@@ -3,7 +3,7 @@ const Base = require('./_base');
 class User extends Base {
   static table = 'users'; static json = ['library', 'downloads'];
   static async create(data) {
-    const user = new this(data);
+    const user = Object.assign(new this(), data);
     if (user.password && !user.password.startsWith('$2')) {
       user.password = await bcrypt.hash(user.password, 12);
     }
