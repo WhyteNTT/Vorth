@@ -1,0 +1,100 @@
+# Render blueprint for the Vorth API.
+#
+# The API serves both /api/* and the static frontend, so this is a single
+# web service. Create the database first (Render -> New -> Postgres) and its
+# connection string is exposed as DATABASE_URL.
+#
+# Set these in the Render dashboard (or as a .env file on the host):
+#   JWT_SECRET              a long random string — required, the app exits without it
+#   CLIENT_ORIGINS          comma-separated frontend origins, e.g. https://vorth.onrender.com
+#   PUBLIC_URL              https://vorth.onrender.com  (used in emailed links)
+#   SECURE_COOKIES          true in production
+#   MAIL_TRANSPORT          smtp, plus SMTP_*, to actually send mail
+#   RATE_LIMIT_STORE        postgres so limits work across instances
+#   STORAGE_DRIVER          s3 plus S3_* once uploads should outlive a deploy
+
+services:
+  - type: web
+    name: vorth-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # Render injects DATABASE_URL for a Render-managed Postgres.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: 'true'
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: REFRESH_TOKEN_DAYS
+        value: '30'
+      - key: SECURE_COOKIES
+        value: 'true'
+      - key: REFRESH_COOKIE
+        value: 'true'
+      - key: CLIENT_ORIGINS
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: TRUST_PROXY
+        value: 'true'
+      # Rate limiting survives restarts and is shared across instances.
+      - key: RATE_LIMIT_STORE
+        value: postgres
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: '600'
+      - key: AUTH_RATE_LIMIT_MAX_REQUESTS
+        value: '20'
+      # Local disk by default; switch to s3 when you want uploads to persist.
+      - key: STORAGE_DRIVER
+        value: local
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PUBLIC_BASE_URL
+        sync: false
+      # 'console' logs mail instead of sending it. Set to 'smtp' to really send.
+      - key: MAIL_TRANSPORT
+        value: console
+      - key: MAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: '587'
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_SECURE
+        value: 'false'
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: 'false'
+
+databases:
+  # Render-managed Postgres. VORTH owns the schema and applies it on boot, so
+  # there is no separate migration step to keep in step.
+  - name: vorth-db
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: '16'
+    ipAllowList: []      # only reachable from inside Render
+    databaseName: vorth
