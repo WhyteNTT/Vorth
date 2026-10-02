@@ -3,8 +3,45 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
 const generateToken = require('../utils/generateToken');
-const User = require('../models/User');
 const env = require('../config/env');
+const User = require('../models/User');
+const RefreshToken = require('../models/RefreshToken');
+const { loginAttemptLimiter } = require('../middleware/rateLimiter');
+const { sendVerificationAfterSignup } = require('./accountController');
+
+/**
+ * Sets the refresh cookie.
+ *
+ * SameSite=lax is deliberate: the token is only ever sent on top-level
+ * navigation, not on cross-site subrequests, so a CSRF cannot ride on it.
+ * `path` is scoped to the auth routes so it is not attached to every request.
+ */
+function setRefreshCookie(res, token, expiresAt) {
+  if (!env.refreshCookieEnabled) return;
+  res.cookie(env.refreshCookieName, token, {
+    httpOnly: true,
+    secure: env.secureCookies,
+    sameSite: 'lax',
+    path: '/api/auth',
+    expires: expiresAt,
+  });
+}
+
+function clearRefreshCookie(res) {
+  res.clearCookie(env.refreshCookieName, { path: '/api/auth' });
+}
+
+/** Returns a fresh access token (and refresh token) for a live session. */
+async function issueSession(res, user, req) {
+  const accessToken = generateToken(user);
+  const { token, expiresAt } = await RefreshToken.issue(user.id, {
+    userAgent: req.headers['user-agent'],
+    ip: req.ip,
+    days: env.refreshTokenDays,
+  });
+  setRefreshCookie(res, token, expiresAt);
+  return { accessToken, refreshToken: token, refreshExpiresAt: expiresAt };
+}
 
 const registerValidators = [
   body('displayName').trim().notEmpty().withMessage('Display name is required').isLength({ max: 60 }),
@@ -25,7 +62,7 @@ const register = [
     throwIfInvalid(req);
     const { displayName, username, email, password } = req.body;
 
-    const existing = await User.findOne({ $or: [{ username }, { email }] });
+    const existing = await User.findOne({ $or: [{ username }, { email }] }).exec();
     if (existing) {
       const field = existing.username === username ? 'username' : 'email';
       throw ApiError.conflict(`That ${field} is already taken.`);
@@ -41,8 +78,15 @@ const register = [
       lastLoginAt: new Date(),
     });
 
-    const token = generateToken(user);
-    res.status(201).json({ success: true, token, user: user.toSafeObject() });
+    await sendVerificationAfterSignup(user);
+
+    const session = await issueSession(res, user, req);
+    res.status(201).json({
+      success: true,
+      token: session.accessToken,
+      refreshToken: session.refreshToken,
+      user: user.toSafeObject(),
+    });
   }),
 ];
 
@@ -60,7 +104,7 @@ const login = [
 
     const user = await User.findOne({
       $or: [{ username: normalized }, { email: normalized }],
-    }).select('+password');
+    }).exec();
 
     // Same generic message whether the account or the password was wrong,
     // so login attempts can't be used to enumerate valid usernames/emails.
@@ -72,10 +116,18 @@ const login = [
     user.lastLoginAt = new Date();
     await user.save();
 
-    const token = generateToken(user);
-    res.json({ success: true, token, user: user.toSafeObject() });
+    const session = await issueSession(res, user, req);
+    res.json({
+      success: true,
+      token: session.accessToken,
+      refreshToken: session.refreshToken,
+      user: user.toSafeObject(),
+    });
   }),
 ];
+
+// Per-account throttle, applied only once the password check has failed.
+const loginThrottled = [loginAttemptLimiter, login];
 
 const getMe = asyncHandler(async (req, res) => {
   res.json({ success: true, user: req.user.toSafeObject() });
@@ -108,14 +160,89 @@ const changePassword = [
   asyncHandler(async (req, res) => {
     throwIfInvalid(req);
     const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user.id).select('+password');
+    const user = await User.findById(req.user.id);
     if (!(await user.comparePassword(currentPassword))) {
       throw ApiError.unauthorized('Current password is incorrect.');
     }
     user.password = newPassword;
     await user.save();
-    res.json({ success: true, message: 'Password updated.' });
+
+    // Changing a password ends every other session, then issues a fresh one
+    // for this device so the user is not signed out of the tab they are in.
+    await RefreshToken.revokeAllFor(user.id);
+    const session = await issueSession(res, user, req);
+
+    res.json({
+      success: true,
+      message: 'Password updated.',
+      token: session.accessToken,
+      refreshToken: session.refreshToken,
+    });
   }),
 ];
 
-module.exports = { register, login, getMe, updateProfile, changePassword };
+/** Reads the refresh token from the httpOnly cookie, or the body as a fallback. */
+function presentedRefreshToken(req) {
+  const fromCookie = req.cookies ? req.cookies[env.refreshCookieName] : undefined;
+  if (fromCookie) return fromCookie;
+  return (req.body && req.body.refreshToken) || null;
+}
+
+/**
+ * POST /api/auth/refresh — exchanges a refresh token for a new access token.
+ * The presented token is revoked and replaced, so it cannot be replayed.
+ */
+const refresh = asyncHandler(async (req, res) => {
+  const presented = presentedRefreshToken(req);
+
+  if (!presented) throw ApiError.unauthorized('No session to refresh.');
+
+  const record = await RefreshToken.findActive(presented);
+  if (!record) {
+    clearRefreshCookie(res);
+    throw ApiError.unauthorized('Your session has expired. Please sign in again.');
+  }
+
+  const user = await User.findById(record.user);
+  if (!user) throw ApiError.unauthorized('The account for this session no longer exists.');
+  if (user.isBanned) {
+    await record.revoke();
+    clearRefreshCookie(res);
+    throw ApiError.forbidden('This account has been suspended.');
+  }
+
+  await record.revoke();
+  const session = await issueSession(res, user, req);
+
+  res.json({
+    success: true,
+    token: session.accessToken,
+    refreshToken: session.refreshToken,
+    user: user.toSafeObject(),
+  });
+});
+
+/** POST /api/auth/logout — revokes the presented refresh token. */
+const logout = asyncHandler(async (req, res) => {
+  const presented = presentedRefreshToken(req);
+  if (presented) {
+    const record = await RefreshToken.findActive(presented);
+    if (record) await record.revoke();
+  }
+  clearRefreshCookie(res);
+  res.json({ success: true, message: 'Signed out.' });
+});
+
+/** POST /api/auth/logout-all — revokes every session for the caller. */
+const logoutAll = [
+  asyncHandler(async (req, res) => {
+    const count = await RefreshToken.revokeAllFor(req.user.id);
+    clearRefreshCookie(res);
+    res.json({ success: true, message: `Signed out of ${count} session(s).` });
+  }),
+];
+
+module.exports = {
+  register, login, loginThrottled, getMe, updateProfile, changePassword,
+  refresh, logout, logoutAll,
+};

@@ -7,14 +7,19 @@ const list = asyncHandler(async (req, res) => {
   const notifications = await Notification.find({ user: req.user.id })
     .sort({ createdAt: -1 })
     .limit(50)
-    .populate('series', 'title slug');
+    .populate('series', 'title slug')
+    .exec();
   const unreadCount = await Notification.countDocuments({ user: req.user.id, isRead: false });
   res.json({ success: true, notifications, unreadCount });
 });
 
 // PATCH /api/notifications/:id/read
 const markRead = asyncHandler(async (req, res) => {
-  const notification = await Notification.findOne({ _id: req.params.id, user: req.user.id });
+  // Scoped to req.user.id so one reader can never mark another's notification.
+  const notification = await Notification.findOne({
+    id: req.params.id,
+    user: req.user.id,
+  }).exec();
   if (!notification) throw ApiError.notFound('Notification not found.');
   notification.isRead = true;
   await notification.save();

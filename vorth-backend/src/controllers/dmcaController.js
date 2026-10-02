@@ -2,6 +2,7 @@ const { body } = require('express-validator');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
+const { withTransaction } = require('../config/db');
 const DMCAReport = require('../models/DMCAReport');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
@@ -35,17 +36,42 @@ const submit = [
   asyncHandler(async (req, res) => {
     throwIfInvalid(req);
     if (req.body.infringingChapter) {
-      const chapter = await Chapter.findById(req.body.infringingChapter).select('series isRemoved');
+      const chapter = await Chapter.findById(req.body.infringingChapter).select('series isRemoved').exec();
       if (!chapter || chapter.isRemoved) throw ApiError.notFound('Infringing chapter not found.');
-      if (req.body.infringingSeries && chapter.series.toString() !== req.body.infringingSeries) {
+      if (req.body.infringingSeries && String(chapter.series) !== req.body.infringingSeries) {
         throw ApiError.badRequest('The infringing chapter does not belong to the selected series.');
       }
     }
     if (req.body.infringingSeries) {
-      const series = await Series.findById(req.body.infringingSeries).select('isRemoved');
+      const series = await Series.findById(req.body.infringingSeries).select('isRemoved').exec();
       if (!series || series.isRemoved) throw ApiError.notFound('Infringing series not found.');
     }
-    const report = await DMCAReport.create(req.body);
+
+    // Whitelist the columns explicitly. Passing req.body straight through
+    // would let a client supply fields the schema does not expect, which
+    // surfaces as a 500 rather than a clean validation error.
+    const {
+      reporterName, reporterEmail, reporterOrganization, reporterAddress,
+      copyrightedWorkDescription, originalWorkUrl,
+      infringingSeries, infringingChapter, infringingUrlDescription,
+      signature,
+    } = req.body;
+
+    const report = await DMCAReport.create({
+      reporterName, reporterEmail,
+      reporterOrganization: reporterOrganization ?? null,
+      reporterAddress: reporterAddress ?? null,
+      copyrightedWorkDescription, originalWorkUrl: originalWorkUrl ?? null,
+      infringingSeries: infringingSeries ?? null,
+      infringingChapter: infringingChapter ?? null,
+      infringingUrlDescription: infringingUrlDescription ?? null,
+      // The two statutory statements are validated as required above, so the
+      // stored value is always the affirmation itself.
+      goodFaithStatement: true,
+      accuracyStatement: true,
+      signature,
+    });
+
     res.status(201).json({
       success: true,
       message: 'Your takedown notice has been received and will be reviewed.',
@@ -86,27 +112,34 @@ const resolve = [
     if (!report) throw ApiError.notFound('Report not found.');
 
     const { status, adminNotes } = req.body;
-    report.status = status;
-    if (adminNotes !== undefined) report.adminNotes = adminNotes;
-    if (status === 'accepted' || status === 'rejected') {
-      report.resolvedAt = new Date();
-      report.resolvedBy = req.user.id;
-    }
 
-    if (status === 'accepted') {
-      if (report.infringingChapter) {
-        await Chapter.findByIdAndUpdate(report.infringingChapter, { isRemoved: true });
+    // Takedown, report state and resolution metadata must all land or none
+    // of them: a series removed against a report that still says "pending"
+    // would be invisible to an auditor.
+    const updated = await withTransaction(async (client) => {
+      report.status = status;
+      if (adminNotes !== undefined) report.adminNotes = adminNotes;
+      if (status === 'accepted' || status === 'rejected') {
+        report.resolvedAt = new Date();
+        report.resolvedBy = req.user.id;
       }
-      if (report.infringingSeries) {
-        await Series.findByIdAndUpdate(report.infringingSeries, {
-          isRemoved: true,
-          takedownReason: `DMCA takedown accepted (report ${report._id})`,
-        });
-      }
-    }
+      await report.save({ client });
 
-    await report.save();
-    res.json({ success: true, report });
+      if (status === 'accepted') {
+        if (report.infringingChapter) {
+          await Chapter.findByIdAndUpdate(report.infringingChapter, { isRemoved: true }, { client });
+        }
+        if (report.infringingSeries) {
+          await Series.findByIdAndUpdate(report.infringingSeries, {
+            isRemoved: true,
+            takedownReason: `DMCA takedown accepted (report ${report._id})`,
+          }, { client });
+        }
+      }
+      return report;
+    });
+
+    res.json({ success: true, report: updated });
   }),
 ];
 

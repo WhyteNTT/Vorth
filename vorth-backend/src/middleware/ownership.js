@@ -11,10 +11,10 @@ const Chapter = require('../models/Chapter');
 // can add chapters to their own series — everyone else can only read."
 const requireSeriesOwner = asyncHandler(async (req, res, next) => {
   const seriesId = req.params.seriesId || req.params.id;
-  const series = await Series.findById(seriesId);
+  const series = await Series.findById(seriesId).exec();
   if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
 
-  const isOwner = series.owner.toString() === req.user.id;
+  const isOwner = String(series.owner) === String(req.user.id);
   const isAdmin = req.user.role === 'admin';
   if (!isOwner && !isAdmin) {
     throw ApiError.forbidden('Only the creator who published this series can modify it.');
@@ -28,13 +28,13 @@ const requireSeriesOwner = asyncHandler(async (req, res, next) => {
 // or :id, then checks ownership on its parent series.
 const requireChapterOwner = asyncHandler(async (req, res, next) => {
   const chapterId = req.params.chapterId || req.params.id;
-  const chapter = await Chapter.findById(chapterId);
+  const chapter = await Chapter.findById(chapterId).exec();
   if (!chapter || chapter.isRemoved) throw ApiError.notFound('Chapter not found.');
 
-  const series = await Series.findById(chapter.series);
+  const series = await Series.findById(chapter.series).exec();
   if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
 
-  const isOwner = series.owner.toString() === req.user.id;
+  const isOwner = String(series.owner) === String(req.user.id);
   const isAdmin = req.user.role === 'admin';
   if (!isOwner && !isAdmin) {
     throw ApiError.forbidden('Only the creator who published this series can modify its chapters.');

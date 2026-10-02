@@ -6,7 +6,11 @@ const Comment = require('../models/Comment');
 
 // GET /api/admin/users
 const listUsers = asyncHandler(async (req, res) => {
-  const users = await User.find().sort({ createdAt: -1 }).limit(200);
+  // Never select the password column: these rows go straight to the client.
+  const users = await User.find()
+    .select('-password')
+    .sort({ createdAt: -1 })
+    .limit(200);
   res.json({ success: true, users });
 });
 

@@ -5,7 +5,6 @@ function notFound(req, res, next) {
   next(ApiError.notFound(`Route not found: ${req.method} ${req.originalUrl}`));
 }
 
-// eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal server error';

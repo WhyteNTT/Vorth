@@ -16,11 +16,13 @@ const protect = asyncHandler(async (req, res, next) => {
   let payload;
   try {
     payload = jwt.verify(token, env.jwtSecret);
-  } catch (err) {
+  } catch (_) {
     throw ApiError.unauthorized('Your session is invalid or has expired. Please sign in again.');
   }
 
-  const user = await User.findById(payload.id);
+  // Re-read the account on every request so bans, deletions and role changes
+  // take effect immediately rather than when the token happens to expire.
+  const user = await User.findById(payload.id).exec();
   if (!user) throw ApiError.unauthorized('The account for this session no longer exists.');
   if (user.isBanned) throw ApiError.forbidden('This account has been suspended.');
 
@@ -30,15 +32,15 @@ const protect = asyncHandler(async (req, res, next) => {
 
 // Attaches req.user if a valid token is present, but never blocks the
 // request — for endpoints that behave differently for logged-in users
-// without requiring login (e.g. personalized recommendations later).
+// without requiring login (e.g. view de-duplication, personalised feeds).
 const optionalAuth = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) return next();
   try {
     const payload = jwt.verify(header.split(' ')[1], env.jwtSecret);
-    const user = await User.findById(payload.id);
+    const user = await User.findById(payload.id).exec();
     if (user && !user.isBanned) req.user = user;
-  } catch (err) {
+  } catch (_) {
     // invalid/expired token on an optional route — just proceed as a guest
   }
   next();
