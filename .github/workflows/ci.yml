@@ -10,6 +10,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Shared by both jobs so the psql steps and the app agree on the database.
+  # PGPASSWORD matters: the service container requires a password over TCP, and
+  # a step without it fails with an opaque "fe_sendauth: no password supplied".
+  PGPASSWORD: vorth
+
 jobs:
   test:
     name: Test + lint
@@ -24,7 +30,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: vorth-backend/package-lock.json
 
@@ -37,14 +43,17 @@ jobs:
       - name: Every module loads (catches syntax/import errors)
         run: npm run smoke
 
+      # Deliberately runs with no .env. The repository does not commit one, so
+      # this is what CI always sees, and the suite has to pass without any
+      # local configuration leaking in.
       - name: Unit + HTTP tests
         run: npm test
 
       - name: Browser XSS regression
         run: npm run test:browser:ci
 
-  postgres-migration:
-    name: Schema applies to a real PostgreSQL
+  postgres:
+    name: Schema and queries against a real PostgreSQL
     runs-on: ubuntu-latest
 
     services:
@@ -65,78 +74,105 @@ jobs:
       run:
         working-directory: vorth-backend
 
+    env:
+      DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
+      DATABASE_SSL: 'false'
+      JWT_SECRET: ci-secret-not-used-for-real-signing
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: vorth-backend/package-lock.json
 
       - run: npm ci
 
-      - name: Apply schema (must be idempotent)
-        env:
-          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
-          VORTH_LIVE_DB: '1'
-          DATABASE_SSL: 'false'
-          JWT_SECRET: ci-secret-not-used-for-real-signing
+      - name: Apply schema
         run: node -e "require('./src/config/env'); require('./src/config/db').connectDB().then(()=>console.log('schema ok')).catch(e=>{console.error(e.message);process.exit(1)})"
 
-      - name: Apply schema a second time (idempotency)
-        env:
-          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
-          VORTH_LIVE_DB: '1'
-          DATABASE_SSL: 'false'
-          JWT_SECRET: ci-secret-not-used-for-real-signing
+      - name: Apply schema a second time (must be idempotent)
         run: node -e "require('./src/config/env'); require('./src/config/db').connectDB().then(()=>console.log('schema still ok')).catch(e=>{console.error(e.message);process.exit(1)})"
 
-      - name: Verify the indexes and tables exist
-        env:
-          PGPASSWORD: vorth
-        run: |
-          psql -h 127.0.0.1 -U vorth -d vorth_test -c "\dt"
-          psql -h 127.0.0.1 -U vorth -d vorth_test -c "SELECT tablename FROM pg_indexes WHERE schemaname='current_schema()' ORDER BY tablename;"
-          # Every model must map to a table that actually exists.
-          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='current_schema' AND tablename IN ('users','series','chapters','comments','notifications','reading_progress','dmca_reports','view_events','refresh_tokens','auth_tokens','rate_limit_buckets');" | grep -qx 11
+      # Replaces a psql | grep pipeline that asserted nothing useful: it compared
+      # schemaname to the string 'current_schema' instead of calling
+      # current_schema(), so it counted 0 tables and grep was the only failure.
+      - name: Every table, column, index and UNIQUE constraint exists
+        run: npm run db:verify-schema
 
       - name: Upgrades a database created by the PREVIOUS schema
         env:
           DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_migration
           VORTH_LIVE_DB: '1'
-          DATABASE_SSL: 'false'
-          JWT_SECRET: ci-secret-not-used-for-real-signing
           NODE_ENV: test
         run: |
-          psql -h 127.0.0.1 -U vorth -d postgres -c "CREATE DATABASE vorth_migration;" || true
-          # Recreate the schema exactly as the previous release left it, then
-          # prove the current code migrates it in place without losing data.
+          psql -h 127.0.0.1 -U vorth -d postgres -c "CREATE DATABASE vorth_migration;"
+
+          # Recreate the schema exactly as the last pre-upgrade commit left
+          # it. applyLegacySchema.js is pinned to that commit: reading HEAD
+          # would return the current schema, and the check below would then
+          # apply the new DDL and assert the new DDL exists - passing while
+          # proving nothing.
           node scripts/applyLegacySchema.js
-          PGPASSWORD=vorth psql -h 127.0.0.1 -U vorth -d vorth_migration -c "INSERT INTO users (display_name, username, email, password, agreed_to_terms_at) VALUES ('Legacy','legacy_user','legacy@example.com','hash', now());"
+
+          # Negative control. If the schema check passes *before* the upgrade,
+          # it cannot detect the upgrade either, so the whole step is void.
+          if node scripts/verifySchema.js; then
+            echo "::error::verify-schema passed on a pre-upgrade database - it is not detecting anything"
+            exit 1
+          fi
+          echo "pre-upgrade schema correctly rejected"
+
+          psql -h 127.0.0.1 -U vorth -d vorth_migration -c \
+            "INSERT INTO users (display_name, username, email, password, agreed_to_terms_at) VALUES ('Legacy','legacy_user','legacy@example.com','hash', now());"
+
+          # Booting the current code is the whole migration story: no separate
+          # migration tool, no down-migration, purely additive.
           node scripts/verifyMigration.js
-          # db:wipe must still work against the migrated schema.
+
+          # And now the same check must pass.
+          node scripts/verifySchema.js
+
+          # db:wipe must still work against the upgraded schema, including
+          # the new tables reached through ON DELETE CASCADE.
           node scripts/wipeDatabase.js --confirm --users
 
       - name: Live conformance suite (executes the generated SQL)
         env:
-          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
           VORTH_LIVE_DB: '1'
-          DATABASE_SSL: 'false'
-          JWT_SECRET: ci-secret-not-used-for-real-signing
         run: npm run test:live
 
       - name: Seed script is idempotent and produces a browsable catalog
         env:
-          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
-          DATABASE_SSL: 'false'
-          JWT_SECRET: ci-secret-not-used-for-real-signing
           MAIL_TRANSPORT: disabled
         run: |
-          npm run db:seed -- --confirm
-          # A second run must not duplicate anything.
-          npm run db:seed -- --confirm
-          PGPASSWORD=vorth psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
-            "SELECT (SELECT count(*) FROM series) AS series, (SELECT count(*) FROM chapters) AS chapters, (SELECT count(*) FROM comments) AS comments;"
           psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
-            "SELECT count(*) FROM series WHERE (\"views\"->>'alltime')::int > 0;" | grep -qx t
+            "SELECT (SELECT count(*) FROM series) || ' series, ' || (SELECT count(*) FROM chapters) || ' chapters, ' || (SELECT count(*) FROM comments) || ' comments';"
+
+          npm run db:seed -- --confirm
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM series"   > /tmp/seed1
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM users"     >> /tmp/seed1
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM comments"  >> /tmp/seed1
+
+          # Running it a second time must change nothing.
+          npm run db:seed -- --confirm
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM series"   > /tmp/seed2
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM users"     >> /tmp/seed2
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM comments"  >> /tmp/seed2
+
+          echo "--- after first run ---";  cat /tmp/seed1
+          echo "--- after second run ---"; cat /tmp/seed2
+          if ! diff -q /tmp/seed1 /tmp/seed2; then
+            echo "::error::db:seed is not idempotent - counts changed on the second run"
+            exit 1
+          fi
+
+          # The catalog has to be browsable, and every ranking key has to be
+          # present and numeric, or the public rankings endpoint 500s when it
+          # casts views->>'alltime' to an integer.
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
+            "SELECT (SELECT count(*) FROM series) > 0 AND (SELECT count(*) FROM chapters) > 0 AND (SELECT count(*) FROM comments) > 0;" | grep -qx t
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
+            "SELECT count(*) FROM series WHERE NOT (views ? 'alltime' AND views ? 'daily' AND (views->>'alltime') ~ '^[0-9]+$');" | grep -qx 0

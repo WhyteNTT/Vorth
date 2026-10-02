@@ -299,9 +299,18 @@ that captures every statement, so the fast suites assert on the SQL actually
 issued rather than on a reimplementation. `test:live` exists because a
 double cannot catch a syntax error - it caught two during this work.
 
+Tests are invoked through `test/run.js` rather than `node --test "test/*.test.js"`.
+Node only expands that glob itself on 21+; on 20 and earlier the quoted pattern
+is treated as a literal filename and the run dies with
+`Could not find '.../test/*.test.js'`. Removing the quotes does not help either,
+because npm runs scripts through cmd.exe on Windows and sh on Linux, so only one
+of the two expands it. The runner resolves the file list in Node and passes
+explicit paths, which behaves identically everywhere.
+
 CI runs lint, the full suite, the browser regression, the live PostgreSQL
 suite, the seed script's idempotency, and an upgrade from the previous
-schema.
+schema. It runs on Node 22 and deliberately supplies **no `.env`**, so the
+suite is proven to pass without local configuration leaking in.
 
 ### Warning: `test:live` refuses to touch a real database
 
@@ -333,14 +342,31 @@ order. `scripts/inspectCounts.js` prints row counts for a database
 ### Migrations
 
 The schema is applied on boot and is purely additive, so upgrading is just
-starting the new code. To prove it:
+starting the new code. There is no migration tool and no down-migration.
 
 ```bash
-npm run db:apply-legacy   # recreates the PREVIOUS schema (git HEAD) in a throwaway db
-npm run db:verify-migration   # boots the current code against it and asserts nothing was lost
+# In a throwaway database, never production:
+npm run db:apply-legacy       # rebuild the PRE-UPGRADE schema (see below)
+npm run db:verify-schema      # must FAIL here - that is the point
+npm run db:verify-migration   # boots the current code against it, asserts nothing was lost
+npm run db:verify-schema      # must now PASS
 ```
 
-CI runs both against a real PostgreSQL.
+Two details worth knowing, because both were bugs first:
+
+- `db:apply-legacy` is **pinned to commit `cfd488b`**, the last commit before
+  the schema was extended. Reading `HEAD` instead would return the *current*
+  schema, so the check would apply the new DDL and then assert the new DDL
+  exists - passing while proving nothing. The script also fails loudly if the
+  pinned commit ever turns out to already contain a post-upgrade table.
+- `db:verify-schema` deliberately **does not boot the app first**. A boot
+  re-creates any missing index, so verifying after one would silently repair
+  the very thing being checked and the index assertions could never fail. It
+  inspects the schema exactly as it stands.
+
+CI runs the whole sequence against a real PostgreSQL, including the failing
+step in the middle: if `db:verify-schema` passes on a pre-upgrade database,
+the CI job reports an error, because a check that cannot fail proves nothing.
 ## 9. Known limitations / what's next
 
 - **No payment/monetization** — out of scope for this pass.
@@ -356,6 +382,9 @@ CI runs both against a real PostgreSQL.
 - **`aggregate()`** supports `$match`, `$group` (`$sum`/`$avg`/`$min`/`$max`/
   `{$sum: 1}`), `$sort`, `$skip`, `$limit` and `$project`, grouped by `series`.
   Anything else throws rather than returning quietly wrong numbers.
+- **The schema check is a floor, not a ceiling.** `db:verify-schema` asserts
+  11 tables, 1 column, 8 UNIQUE constraints and 21 indexes. It cannot tell you
+  about a column type or a constraint it does not know about.
 - **Uploads default to local disk.** Set `STORAGE_DRIVER=s3` before running
   more than one instance, or files will not survive a redeploy.
 - **Object storage deletion** is not implemented for the `s3` driver — use a
