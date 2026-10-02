@@ -91,7 +91,9 @@ test('presigned urls are signed, scoped and expire', () => {
     assert.equal(put.searchParams.get('X-Amz-Expires'), '900');
     assert.match(put.searchParams.get('X-Amz-Credential'), /AKIAEXAMPLE\/\d{8}\/eu-central-1\/s3\/aws4_request/);
     assert.ok(put.searchParams.get('X-Amz-Signature'), 'a signature is present');
-    assert.equal(put.searchParams.get('Content-Type'), 'image/png');
+    // Content-Type is not a query parameter: it travels as a request header
+    // and is not signed, which is what AWS's own presigner does.
+    assert.equal(put.searchParams.get('X-Amz-Content-Sha256'), 'UNSIGNED-PAYLOAD');
     assert.match(put.hostname, /my-bucket\.s3\./);
 
     const get = new URL(storage.presignGet('20260101-abc.png'));
@@ -118,15 +120,18 @@ test('the s3 driver honours a public base url when signing is disabled', () => {
   }
 });
 
-test('s3 delete fails loudly rather than silently doing nothing', async () => {
+test('the s3 driver refuses to delete when it is not configured', async () => {
   const saved = { ...env };
   try {
-    Object.assign(env, { storageDriver: 's3', s3Bucket: 'b', s3AccessKeyId: 'k', s3SecretAccessKey: 's' });
-    await assert.rejects(() => storage.s3Driver.remove('a.png'), /not implemented/);
+    Object.assign(env, { storageDriver: 's3', s3Bucket: '', s3AccessKeyId: '', s3SecretAccessKey: '' });
+    await assert.rejects(() => storage.s3Driver.remove('a.png'), /requires S3_BUCKET/);
   } finally {
     Object.assign(env, saved);
   }
 });
+
+// Signed DELETE itself is covered end to end in test/s3.test.js, against a
+// server that verifies the signature.
 
 /* ------------------------------------------------------------------ *
  * Rate-limit stores

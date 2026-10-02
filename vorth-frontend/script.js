@@ -11,20 +11,37 @@ if (!Safe) {
 /*
  * Resolve the API base.
  *
- * When the backend also serves these files, the API is same-origin and we use
- * it directly. A previous version hardcoded http://localhost:5000 for local
- * hosts, which is cross-origin when the page is opened via 127.0.0.1 — the
- * browser then blocks every request under a `default-src 'self'` CSP.
- * An explicit override (window.VORTH_API_BASE or ?api=) still wins.
+ * Same-origin by default, because that is what the deployment actually is: the
+ * backend mounts this frontend statically (see app.js), so the page and /api
+ * share an origin and need no CORS or CSP exception at all.
+ *
+ * Earlier versions tried to work out "is the backend serving me?" from the
+ * hostname plus whether the port was literally 5000. That is wrong on any other
+ * port - a platform-assigned one, or PORT=xxxx locally - and the page then aimed
+ * at http://localhost:5000/api. Being cross-origin, every request was refused by
+ * connect-src and the application sat there inert while reporting no error of its
+ * own. There was also a hardcoded third-party origin that could never be correct
+ * for anyone else's deployment.
+ *
+ * Same-origin needs no configuration. The split case (serving these files from a
+ * separate static server in development) is covered by ?api=... , and a request
+ * that fails at the network level on a local host additionally retries once
+ * against the local API port.
  */
-const API_BASE = (() => {
+const LOCAL_API_FALLBACK = 'http://localhost:5000/api';
+const isLocalHost = () => ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+function resolveApiBase(){
+  const explicit = window.VORTH_API_BASE;
+  if(explicit) return String(explicit).replace(/\/$/, '');
   const override = new URLSearchParams(window.location.search).get('api');
-  if (override) return override.replace(/\/$/, '');
-  const local = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-  // Served by the backend itself (app.js mounts the frontend statically).
-  if (!local || (window.location.port === '5000')) return `${window.location.origin}/api`;
-  return local ? 'http://localhost:5000/api' : 'https://vorth.onrender.com/api';
-})();
+  if(override) return override.replace(/\/$/, '');
+  return `${window.location.origin}/api`;
+}
+
+let apiBase = resolveApiBase();
+// Set once a same-origin request has proven the API is not on this origin.
+let apiBaseIsSplit = false;
 
 const TOKEN_STORAGE_KEY = 'vorth_token';
 const GENRES = ['Fantasy','Romance','Sci-Fi','Horror','Mystery','Action','Drama','Isekai','Slice of Life'];
@@ -67,7 +84,7 @@ function fmtViews(n){ if(n>=1000000) return (n/1000000).toFixed(1)+'M'; if(n>=10
 const escapeHtml = (str)=> Safe.escapeHtml(str);
 function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h = (h<<5)-h + str.charCodeAt(i); h|=0; } return Math.abs(h); }
 function coverGradient(seed){ const g = GRADIENTS[hash(String(seed))%GRADIENTS.length]; return `linear-gradient(150deg, ${g[0]}, ${g[1]})`; }
-const ORIGIN = API_BASE.replace(/\/api$/, '');
+let ORIGIN = apiBase.replace(/\/api$/, '');
 function mediaUrl(value){ return Safe.resolveMediaUrl(value, ORIGIN); }
 /* Artwork is applied through the CSSOM after insertion (see applyArtwork),
    never interpolated into an HTML attribute — that was the stored-XSS sink. */
@@ -112,7 +129,8 @@ function refreshSession(){
   return refreshInFlight;
 }
 async function apiFetch(path, options={}){
-  const url = path.startsWith('http') ? path : `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
+  const buildUrl = (base) => path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+  const url = buildUrl(apiBase);
   const headers = {};
   const token = getToken();
   if(token) headers.Authorization = `Bearer ${token}`;
@@ -120,7 +138,29 @@ async function apiFetch(path, options={}){
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   if(body && !isFormData){ headers['Content-Type'] = 'application/json'; }
   const send = (tok) => fetch(url, { ...options, headers:{ ...headers, ...(tok ? { Authorization:`Bearer ${tok}` } : {}), ...(options.headers || {}) }, credentials:'include', body: body && !isFormData ? JSON.stringify(body) : body });
-  let response = await send(token);
+  let response;
+  try {
+    response = await send(token);
+  } catch (netErr) {
+    /*
+     * The page was served by something that is not the API - the separate
+     * static-server development setup. Only retry when we are on a local host,
+     * where that is the expected cause, and only once, so a genuinely
+     * unreachable API does not turn into a retry storm.
+     */
+    if (!path.startsWith('http') && !apiBaseIsSplit && !options._splitRetried && isLocalHost()) {
+      apiBaseIsSplit = true;
+      apiBase = LOCAL_API_FALLBACK;
+      ORIGIN = apiBase.replace(/\/api$/, '');
+      try {
+        response = await send(token);
+      } catch (_) {
+        throw netErr;
+      }
+    } else {
+      throw netErr;
+    }
+  }
   /*
    * Refresh and replay on an expired access token.
    *
