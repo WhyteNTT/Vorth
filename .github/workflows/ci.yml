@@ -80,7 +80,12 @@ jobs:
       JWT_SECRET: ci-secret-not-used-for-real-signing
 
     steps:
+      # Full history, not the default depth 1: applyLegacySchema.js reads the
+      # pre-upgrade schema from a pinned commit, and a shallow clone does not
+      # contain it. This job is the only one that needs it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:

@@ -37,7 +37,13 @@ try {
   });
 } catch (_) {
   console.error(`Could not read ${DB_FILE} at commit ${PREVIOUS_SCHEMA_COMMIT}.`);
-  console.error('Run this from a full clone of the repository.');
+  console.error('');
+  console.error('Most likely cause: a shallow clone. This needs the full history,');
+  console.error('because `git clone --depth 1` does not contain that commit:');
+  console.error('');
+  console.error('  git fetch --unshallow        # or clone without --depth');
+  console.error('');
+  console.error('CI needs `fetch-depth: 0` on actions/checkout for the same reason.');
   process.exit(1);
 }
 
