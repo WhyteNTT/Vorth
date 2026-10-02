@@ -1,8 +1,8 @@
 # Vorth Backend
 
 Node.js + Express + PostgreSQL API for the Vorth novel/comic reading
-platform. Ships with **no mock or seed data** — the catalog is empty
-until a real user publishes something.
+platform. The catalog starts **empty** — run `npm run db:seed -- --confirm`
+if you want demo content.
 
 > **Legal notice:** the `/legal` folder contains *template* Terms of
 > Service, Privacy Policy, DMCA Policy, Copyright Guidelines, and
@@ -31,8 +31,30 @@ If you were previously running an earlier prototype with mock books,
 clear it with:
 
 ```bash
-npm run db:wipe -- --confirm
+npm run db:wipe -- --confirm   # clear catalog data
+npm run db:seed -- --confirm   # add demo users/series/chapters/reviews
+npm run db:inspect             # print row counts (read-only)
 ```
+
+`db:seed` is idempotent and refuses to run against `NODE_ENV=production`
+without `FORCE=1`. Every demo account shares the password `vorthdemo123`, so
+change or delete them before opening the site publicly.
+
+### Deploying
+
+[`../render.yaml`](../render.yaml) is a Render blueprint for a single web
+service (the API also serves the frontend) plus a managed PostgreSQL 16.
+Vorth owns its schema and applies it on boot, so there is no separate
+migration step to keep in step.
+
+Set `CLIENT_ORIGINS`, `PUBLIC_URL` and `SECURE_COOKIES` in the dashboard. For
+more than one instance also set `RATE_LIMIT_STORE=postgres` and
+`TRUST_PROXY=true`.
+
+The schema change is purely additive - new tables plus one new column on
+`users`, no drops or renames - so booting the new code against an existing
+database upgrades it in place. `npm run db:verify-migration` proves this
+against a replica.
 
 ## 2. Project structure
 
@@ -43,7 +65,16 @@ src/
   config/
     env.js                 loads & validates environment variables
     db.js                      PostgreSQL connection and schema bootstrap
-  models/                  User, Series, Chapter, Comment, ReadingProgress, Notification, DMCAReport
+  models/
+    _sql.js                Mongo-style filter/sort/update -> parameterised SQL
+    _base.js               find/populate/save/deleteMany/aggregate
+    User, Series, Chapter, Comment, ReadingProgress, Notification,
+    DMCAReport, RefreshToken, AuthToken
+  services/
+    views.js                idempotent view counting
+    uploads.js              orphan-upload pruning
+    storage.js              local / S3-compatible upload drivers
+    mailer.js                console / SMTP email transport
   controllers/              request handlers, one file per resource
   routes/                   route definitions, mounted under /api in routes/index.js
   middleware/
@@ -63,16 +94,65 @@ uploads/                     uploaded cover images & comic pages (served at /upl
 
 ## 3. Authentication
 
-JWT bearer tokens. Register or log in to get a token, then send it as:
+JWT bearer tokens for the API, plus a rotating **httpOnly refresh cookie**
+for the session.
 
-```
-Authorization: Bearer <token>
-```
+| Credential | Lives in | Lifetime | Notes |
+|---|---|---|---|
+| Access token | `Authorization: Bearer ...`, memory + `localStorage` | `JWT_EXPIRES_IN` | `toJSON()` strips it from responses |
+| Refresh token | `httpOnly` cookie scoped to `/api/auth` | `REFRESH_TOKEN_DAYS` | **Unreadable by JavaScript** |
 
-Registration requires `agreedToTerms: true` and `ageConfirmed: true`
-in the request body — these map to the Terms of Service and minimum
-age requirement.
+On `POST /api/auth/refresh` the presented refresh token is **revoked and
+replaced**, so it is single-use. Only a SHA-256 hash of each token is
+stored, so a database leak yields nothing replayable. The cookie is
+`SameSite=Lax`, so it is not attached to cross-site subrequests.
 
+The frontend refreshes transparently: a `401` triggers one refresh attempt
+and a replay of the original request. Concurrent 401s share a single
+refresh (`refreshInFlight`) so a burst of parallel requests cannot rotate
+the token out from under itself.
+
+Changing or resetting a password revokes **every** session for that account
+and issues a fresh one for the current device.
+
+Registration requires `agreedToTerms: true` and `ageConfirmed: true`.
+
+### Email verification and password reset
+
+Single-use, expiring tokens; only their hashes are stored. Set
+`MAIL_TRANSPORT=smtp` plus `SMTP_*` to actually send mail - the default
+`console` transport prints the message instead, and `PUBLIC_URL` is what
+makes the links in it absolute.
+
+`POST /api/auth/forgot-password` and `POST /api/auth/resend-verification`
+answer **identically** whether or not the address exists, so neither can be
+used to enumerate accounts.
+
+## 3a. Configuration highlights
+
+| Variable | Default | Why you would change it |
+|---|---|---|
+| `RATE_LIMIT_STORE` | `memory` | `postgres` shares counters across instances and survives a deploy |
+| `TRUST_PROXY` | `false` | Set `true` behind a proxy, or every client shares one IP in the limiter |
+| `STORAGE_DRIVER` | `local` | `s3` for AWS S3 / R2 / MinIO / B2, so uploads outlive a deploy |
+| `SECURE_COOKIES` | `true` | Must stay `true` in production over HTTPS |
+| `MAIL_TRANSPORT` | `console` | `smtp` to send; `disabled` to suppress |
+| `REQUIRE_EMAIL_VERIFICATION` | `false` | `true` blocks use until confirmed |
+
+## 3b. Uploads
+
+`src/services/storage.js` has two interchangeable drivers:
+
+- **local** (default) - writes to `uploads/`, served by `express.static`.
+- **s3** - any S3-compatible service. SigV4 presigned URLs are implemented
+  with Node's `crypto`, so there is no SDK dependency. Set
+  `S3_PUBLIC_BASE_URL` for a public bucket, or leave signing on to hand out
+  short-lived presigned GETs. Object *deletion* is intentionally not
+  implemented - configure a bucket lifecycle rule instead.
+
+Object keys are flat and random (`20261002-<32 hex>.jpg`), which keeps the
+public URL shape `/uploads/<name>` that the frontend allowlist validates.
+Unreferenced uploads are pruned half-hourly (local driver only).
 ## 4. Ownership model
 
 Anyone can browse and read the catalog without an account. Publishing
@@ -91,13 +171,21 @@ Base URL: `/api`
 | POST | `/auth/login` | — | Body: `identifier` (username or email), `password` |
 | GET | `/auth/me` | ✓ | Current user |
 | PATCH | `/auth/me` | ✓ | Update `displayName`/`bio` |
-| PATCH | `/auth/me/password` | ✓ | Body: `currentPassword, newPassword` |
+| PATCH | `/auth/me/password` | ✓ | Body: `currentPassword, newPassword`. Revokes other sessions |
+| POST | `/auth/refresh` | cookie | Rotate the refresh token, return a new access token |
+| POST | `/auth/logout` | — | Revoke the presented refresh token |
+| POST | `/auth/logout-all` | ✓ | Revoke every session for the caller |
+| POST | `/auth/forgot-password` | — | Body: `email`. Always the same response |
+| POST | `/auth/reset-password` | — | Body: `token, newPassword`. Revokes all sessions |
+| POST | `/auth/verify-email` | — | Body: `token` |
+| POST | `/auth/resend-verification` | ✓ | Re-send the verification link |
 
 ### Series — `/series`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/series` | — | Browse/search. Query: `type, genre, status, tag, q, sort(popular|rating|newest|az), page, limit` |
+| GET | `/series` | — | Browse/search. Query: `type, genre, status, tag, q, sort(popular|rating|newest|az), page, limit`. Response `count` is the total match count |
 | GET | `/series/rankings` | — | Query: `range(daily|weekly|alltime)` |
+| GET | `/series/mine` | ✓ | Every series the caller owns |
 | GET | `/series/:id` | — | Full detail + chapter list + comment count |
 | POST | `/series` | ✓ | Publish a series. Requires `rightsAttested: true` |
 | PATCH | `/series/:id` | ✓ owner | Update series fields |
@@ -109,7 +197,7 @@ Base URL: `/api`
 ### Chapters — `/chapters`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/chapters/:id` | — | Read a chapter (increments view counters) |
+| GET | `/chapters/:id` | optional | Read a chapter. Counts a view at most once per reader per chapter per day |
 | PATCH | `/chapters/:id` | ✓ owner | Edit |
 | DELETE | `/chapters/:id` | ✓ owner | Soft-delete |
 
@@ -121,10 +209,10 @@ Base URL: `/api`
 ### Library — `/library` (all require auth)
 | Method | Path | Description |
 |---|---|---|
-| GET | `/library` | Saved series |
+| GET | `/library` | Saved series, as full documents |
 | POST | `/library/:seriesId` | Save |
 | DELETE | `/library/:seriesId` | Unsave |
-| GET | `/library/downloads` | Chapters marked offline |
+| GET | `/library/downloads` | Chapters marked offline, with `series` and `chapter` resolved |
 | POST | `/library/downloads` | Body: `seriesId, chapterId` |
 | DELETE | `/library/downloads/:chapterId` | Remove offline mark |
 
@@ -160,7 +248,7 @@ Base URL: `/api`
 ### Admin — `/admin` (admin role required)
 | Method | Path | Description |
 |---|---|---|
-| GET | `/admin/users` | List users |
+| GET | `/admin/users` | List users (password column excluded) |
 | PATCH | `/admin/users/:id/ban` | Body: `reason?` |
 | PATCH | `/admin/users/:id/unban` | — |
 | DELETE | `/admin/series/:id` | Moderation removal |
@@ -185,20 +273,92 @@ normal account, promote it manually:
 UPDATE users SET role = 'admin' WHERE username = 'your_username';
 ```
 
-## 7. Known limitations / what's next
+## 8. Testing
 
-- **No refresh tokens** — a single JWT with an expiry set by
-  `JWT_EXPIRES_IN`. "Logout" is client-side token discard.
-- **No email verification or password reset flow** — worth adding
-  before real users rely on this.
+```bash
+npm test            # unit + HTTP + XSS + session + infrastructure suites
+npm run lint        # ESLint
+npm run smoke       # require() every module - catches syntax/import errors
+npm run test:live   # executes the generated SQL against a real PostgreSQL
+```
+
+| Script | Covers |
+|---|---|
+| `sqlBuilder` | SQL generation, operator validation, injection resistance |
+| `models` | dirty tracking, batched populate, `deleteMany` filters, single-statement writes, atomic upsert, password stripping, `aggregate` |
+| `http` | the real Express app over HTTP: routing order, auth/ownership, validation chains, library shape |
+| `session` | token hashing, cookie hardening, rotation, enumeration-equivalence |
+| `infrastructure` | storage drivers, both rate-limit stores |
+| `views` | view de-duplication |
+| `xss` | escaping rules, plus a guard against reintroducing raw interpolation into `script.js` |
+| `browser` | the same payloads replayed in a real browser |
+| `postgres.live` | executes every query against a real PostgreSQL |
+
+The database is replaced by a recording double (`test/helpers/fakePool.js`)
+that captures every statement, so the fast suites assert on the SQL actually
+issued rather than on a reimplementation. `test:live` exists because a
+double cannot catch a syntax error - it caught two during this work.
+
+CI runs lint, the full suite, the browser regression, the live PostgreSQL
+suite, the seed script's idempotency, and an upgrade from the previous
+schema.
+
+### Warning: `test:live` refuses to touch a real database
+
+`test:live` executes `DELETE` statements. `DATABASE_URL` in a local `.env` is
+very often a **real, remote, production database**, so the suite is gated by
+`test/helpers/liveGuard.js` and will not run unless **both** hold:
+
+1. `VORTH_LIVE_DB=1` is set explicitly, and
+2. the target is local (`localhost`/`127.0.0.1`) **or** its database name
+   contains `test`/`ci`/`tmp`/`local`/`dev`/`scratch`/`dummy`.
+
+Known managed-production hosts (Neon, RDS, Azure, Cloud SQL, Supabase,
+PlanetScale, DigitalOcean, Xata) are refused outright even with the opt-in.
+`VORTH_LIVE_DB_ALLOW_REMOTE=1` overrides that last check for a shared
+scratch database - never for production.
+
+```bash
+# PowerShell
+$env:DATABASE_URL = 'postgresql://vorth:vorth@127.0.0.1:5432/vorth_test'
+$env:VORTH_LIVE_DB = '1'
+npm run test:live
+```
+
+The suite is also data-isolated: it never issues `TRUNCATE`, and every row
+it creates is tagged with a per-run marker and deleted again in dependency
+order. `scripts/inspectCounts.js` prints row counts for a database
+(read-only) if you need to see what is in there.
+
+### Migrations
+
+The schema is applied on boot and is purely additive, so upgrading is just
+starting the new code. To prove it:
+
+```bash
+npm run db:apply-legacy   # recreates the PREVIOUS schema (git HEAD) in a throwaway db
+npm run db:verify-migration   # boots the current code against it and asserts nothing was lost
+```
+
+CI runs both against a real PostgreSQL.
+## 9. Known limitations / what's next
+
 - **No payment/monetization** — out of scope for this pass.
 - **No dedicated "report content" endpoint** for non-copyright
   Content Policy violations — only DMCA has a formal intake right now.
 - **No DMCA counter-notice flow** — accepted takedowns are final in
   the current implementation; a real platform typically needs to
   support counter-notices with the statutory waiting period.
-- **Uploads are stored on local disk** (`/uploads`) — fine for a
-  single server, but you'll want S3/GCS/Cloudinary or similar before
-  scaling past one instance.
+- **Search is `ILIKE`** over title + author + synopsis. No tsvector ranking
+  or fuzzy matching yet.
+- **Rate limiting** works, but the default `memory` store is per-process. Set
+  `RATE_LIMIT_STORE=postgres` when running more than one instance.
+- **`aggregate()`** supports `$match`, `$group` (`$sum`/`$avg`/`$min`/`$max`/
+  `{$sum: 1}`), `$sort`, `$skip`, `$limit` and `$project`, grouped by `series`.
+  Anything else throws rather than returning quietly wrong numbers.
+- **Uploads default to local disk.** Set `STORAGE_DRIVER=s3` before running
+  more than one instance, or files will not survive a redeploy.
+- **Object storage deletion** is not implemented for the `s3` driver — use a
+  bucket lifecycle rule.
 - The legal documents in `/legal` are templates — see the notice at
   the top of this file.
