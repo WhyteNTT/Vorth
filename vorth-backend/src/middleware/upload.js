@@ -1,22 +1,16 @@
-const multer = require('multer');
-const path = require('path');
 const crypto = require('crypto');
-const fs = require('fs');
 const env = require('../config/env');
 const ApiError = require('../utils/ApiError');
+const storage = require('../services/storage');
 
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
-const uploadDirectory = path.join(__dirname, '..', '..', 'uploads');
-fs.mkdirSync(uploadDirectory, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDirectory),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const unique = crypto.randomBytes(12).toString('hex');
-    cb(null, `${Date.now()}-${unique}${ext}`);
-  },
-});
+/**
+ * Multer configured to buffer in memory rather than write straight to disk.
+ *
+ * Buffering is what makes the storage driver swappable: the bytes reach the
+ * storage layer, which decides between local disk and object storage. The
+ * size cap keeps that safe in memory.
+ */
+const ALLOWED_MIME = storage.ALLOWED_MIME;
 
 function fileFilter(req, file, cb) {
   if (!ALLOWED_MIME.has(file.mimetype)) {
@@ -25,8 +19,8 @@ function fileFilter(req, file, cb) {
   cb(null, true);
 }
 
-const upload = multer({
-  storage,
+const upload = require('multer')({
+  storage: require('multer').memoryStorage(),
   fileFilter,
   limits: {
     fileSize: env.maxUploadMb * 1024 * 1024,
@@ -34,4 +28,11 @@ const upload = multer({
   },
 });
 
+/** Hash of the bytes, so identical uploads can be detected and deduped. */
+function fingerprint(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 32);
+}
+
 module.exports = upload;
+module.exports.fingerprint = fingerprint;
+module.exports.ALLOWED_MIME = ALLOWED_MIME;

@@ -8,8 +8,11 @@ const { requireSeriesOwner } = require('../middleware/ownership');
 const router = express.Router();
 
 // --- public catalog ---
+// Literal paths must be declared before the '/:id' parameterised route,
+// otherwise "rankings" and "mine" would be read as ids.
 router.get('/', seriesController.list);
-router.get('/rankings', seriesController.rankings); // must precede '/:id'
+router.get('/rankings', seriesController.rankings);
+router.get('/mine', protect, seriesController.mine);
 router.get('/:id', seriesController.getOne);
 
 // --- creator-only writes ---

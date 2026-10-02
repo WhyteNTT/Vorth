@@ -8,14 +8,48 @@ const Comment = require('../models/Comment');
 
 const MAX_PAGE_SIZE = 48;
 
+/**
+ * Shared input rules for creator-supplied strings.
+ *
+ * These are deliberately strict. `genres`/`tags` were previously accepted as
+ * bare arrays with no per-item validation and were rendered into innerHTML
+ * without escaping, which made stored XSS trivial for any registered user.
+ * Restricting the character set server-side means a malicious value cannot be
+ * stored in the first place, independent of how a client renders it.
+ */
+const TAG_RULE = /^[A-Za-z0-9][A-Za-z0-9 '\-\u2019&:!]{0,39}$/;
+const TAG_MESSAGE = 'Each entry may be 1-40 characters using letters, numbers, spaces, or \' - & : !';
+
+const tagArray = (field, max) =>
+  body(field).optional({ nullable: true })
+    .isArray({ max })
+    .bail()
+    .customSanitizer((value) => value.map((v) => (typeof v === 'string' ? v.trim() : v)))
+    .custom((value) => value.every((v) => typeof v === 'string' && TAG_RULE.test(v)))
+    .withMessage(`${field}: ${TAG_MESSAGE}`);
+
+/** coverImage must be an upload path or an http(s) URL — never free text. */
+const coverImageRule = body('coverImage').optional({ nullable: true })
+  .isString()
+  .bail()
+  .custom((value) => /^\/uploads\/[A-Za-z0-9._-]{1,120}$/.test(value)
+    || /^https:\/\/[^\s"']{1,500}$/i.test(value))
+  .withMessage('Cover must be an /uploads/ path or an https:// URL.');
+
 // GET /api/series — browse/search/filter/sort with pagination.
 // No seed data is ever injected here: an empty catalog returns an empty array.
+// Browsing query params arrive as empty strings when a filter is unset, so
+// `checkFalsy` is required — otherwise `?type=` fails isIn() and the browse
+// endpoint returns 400 for every unfiltered request.
 const listValidators = [
-  query('page').optional().isInt({ min: 1 }).toInt(),
-  query('limit').optional().isInt({ min: 1, max: MAX_PAGE_SIZE }).toInt(),
-  query('type').optional().isIn(['novel', 'comic']),
-  query('status').optional().isIn(['Ongoing', 'Completed', 'Hiatus']),
-  query('sort').optional().isIn(['popular', 'rating', 'newest', 'az']),
+  query('page').optional({ checkFalsy: true }).isInt({ min: 1 }).toInt(),
+  query('limit').optional({ checkFalsy: true }).isInt({ min: 1, max: MAX_PAGE_SIZE }).toInt(),
+  query('type').optional({ checkFalsy: true }).isIn(['novel', 'comic']),
+  query('status').optional({ checkFalsy: true }).isIn(['Ongoing', 'Completed', 'Hiatus']),
+  query('sort').optional({ checkFalsy: true }).isIn(['popular', 'rating', 'newest', 'az']),
+  query('genre').optional({ checkFalsy: true }).isLength({ max: 40 }),
+  query('tag').optional({ checkFalsy: true }).isLength({ max: 40 }),
+  query('q').optional({ checkFalsy: true }).isLength({ max: 120 }),
 ];
 
 const list = [
@@ -52,7 +86,8 @@ const list = [
 
     res.json({
       success: true,
-      count: items.length,
+      count: total,
+      pageCount: items.length,
       total,
       page,
       pages: Math.ceil(total / limit) || 1,
@@ -60,6 +95,17 @@ const list = [
     });
   }),
 ];
+
+// GET /api/series/mine — every series the signed-in user owns.
+// Needs its own endpoint: deriving "my series" from the paginated public
+// catalog only ever shows whatever happened to be on page 1.
+const mine = asyncHandler(async (req, res) => {
+  const items = await Series.find({ owner: req.user.id, isRemoved: false })
+    .sort({ createdAt: -1 })
+    .select('-synopsis')
+    .limit(200);
+  res.json({ success: true, count: items.length, series: items });
+});
 
 // GET /api/series/rankings?range=daily|weekly|alltime
 const rankings = asyncHandler(async (req, res) => {
@@ -93,11 +139,11 @@ const createValidators = [
   body('type').isIn(['novel', 'comic']).withMessage('Type must be novel or comic'),
   body('author').trim().notEmpty().withMessage('Author is required').isLength({ max: 80 }),
   body('artist').optional({ nullable: true }).trim().isLength({ max: 80 }),
-  body('genres').optional().isArray({ max: 6 }),
-  body('tags').optional().isArray({ max: 12 }),
+  tagArray('genres', 6),
+  tagArray('tags', 12),
   body('status').optional().isIn(['Ongoing', 'Completed', 'Hiatus']),
   body('synopsis').trim().notEmpty().withMessage('Synopsis is required').isLength({ max: 2000 }),
-  body('coverImage').optional({ nullable: true }).isString(),
+  coverImageRule,
   body('rightsAttested').custom((value) => value === true || value === 'true').withMessage(
     'You must confirm you own the rights to this work, or have permission to publish it, before it can go live.'
   ),
@@ -132,11 +178,11 @@ const updateValidators = [
   body('title').optional().trim().isLength({ min: 1, max: 150 }),
   body('author').optional().trim().isLength({ min: 1, max: 80 }),
   body('artist').optional({ nullable: true }).trim().isLength({ max: 80 }),
-  body('genres').optional().isArray({ max: 6 }),
-  body('tags').optional().isArray({ max: 12 }),
+  tagArray('genres', 6),
+  tagArray('tags', 12),
   body('status').optional().isIn(['Ongoing', 'Completed', 'Hiatus']),
   body('synopsis').optional().trim().isLength({ min: 1, max: 2000 }),
-  body('coverImage').optional({ nullable: true }).isString(),
+  coverImageRule,
 ];
 
 const update = [
@@ -160,4 +206,4 @@ const remove = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Series removed.' });
 });
 
-module.exports = { list, rankings, getOne, create, update, remove };
+module.exports = { list, rankings, mine, getOne, create, update, remove };

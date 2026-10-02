@@ -6,7 +6,9 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/', libraryController.getSaved);
-router.post('/downloads', libraryController.addDownload); // must precede '/:seriesId'
+// Concrete sub-paths are registered before '/:seriesId' so they are not
+// swallowed by the parameterised route.
+router.post('/downloads', libraryController.addDownload);
 router.get('/downloads', libraryController.getDownloads);
 router.delete('/downloads/:chapterId', libraryController.removeDownload);
 

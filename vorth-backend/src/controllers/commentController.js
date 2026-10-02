@@ -6,25 +6,40 @@ const Comment = require('../models/Comment');
 const Series = require('../models/Series');
 const Notification = require('../models/Notification');
 
+/**
+ * Recomputes a series' cached rating from its live comments in a single
+ * statement, so the read and the write can never disagree.
+ */
 async function recomputeRating(seriesId) {
-  const stats = await Comment.aggregate([
-    { $match: { series: seriesId, isRemoved: false } },
-    { $group: { _id: '$series', avg: { $avg: '$rating' }, count: { $sum: 1 } } },
-  ]);
-  const { avg = 0, count = 0 } = stats[0] || {};
-  await Series.findByIdAndUpdate(seriesId, {
-    ratingAvg: Math.round(avg * 10) / 10,
-    ratingCount: count,
-  });
+  const db = require('../config/db');
+  await db.pool.query(
+    `UPDATE "series" AS s
+        SET "rating_avg"   = COALESCE(r.avg, 0),
+            "rating_count" = COALESCE(r.count, 0),
+            "updated_at"   = now()
+       FROM (
+         SELECT ROUND(AVG("rating")::numeric, 1)::float8 AS avg,
+                COUNT(*)::int AS count
+           FROM "comments"
+          WHERE "series" = $1 AND "is_removed" = false
+       ) AS r
+      WHERE s."id" = $1`,
+    [seriesId]
+  );
 }
 
 // GET /api/series/:seriesId/comments
 const list = asyncHandler(async (req, res) => {
   const series = await Series.findById(req.params.seriesId).select('isRemoved');
   if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
+
+  // Filter on the route param rather than series._id: the projection above
+  // only needs isRemoved, and relying on a populated id here is how this
+  // endpoint silently returned an empty list before.
   const comments = await Comment.find({ series: req.params.seriesId, isRemoved: false })
     .sort({ createdAt: -1 })
-    .populate('user', 'username displayName');
+    .populate('user', 'username displayName')
+    .exec();
   res.json({ success: true, comments });
 });
 
@@ -45,12 +60,13 @@ const create = [
     const { rating, text, parent } = req.body;
     if (parent) {
       const parentComment = await Comment.findOne({
-        _id: parent,
+        id: parent,
         series: series._id,
         isRemoved: false,
-      }).select('user');
+      }).select('user').exec();
       if (!parentComment) throw ApiError.badRequest('The parent comment is not part of this series.');
     }
+
     const comment = await Comment.create({
       series: series._id,
       user: req.user.id,
@@ -58,27 +74,31 @@ const create = [
       text,
       parent: parent || null,
     });
+
+    // Refresh the cached rating in the same transaction as nothing else
+    // depends on it, but keep the comment visible even if this fails.
+    try { await recomputeRating(series._id); } catch (err) {
+      console.error('[comments] rating recompute failed:', err.message);
+    }
+
     await comment.populate('user', 'username displayName');
-    await recomputeRating(series._id);
 
     // Notify the series owner and, if this is a reply, the parent comment's author.
     const notifyTargets = new Set();
-    if (series.owner.toString() !== req.user.id) notifyTargets.add(series.owner.toString());
+    if (String(series.owner) !== String(req.user.id)) notifyTargets.add(String(series.owner));
     if (parent) {
-      const parentComment = await Comment.findById(parent).select('user');
-      if (parentComment && parentComment.user.toString() !== req.user.id) {
-        notifyTargets.add(parentComment.user.toString());
+      const parentComment = await Comment.findById(parent).select('user').exec();
+      if (parentComment && String(parentComment.user) !== String(req.user.id)) {
+        notifyTargets.add(String(parentComment.user));
       }
     }
     if (notifyTargets.size) {
-      await Notification.insertMany(
-        [...notifyTargets].map((userId) => ({
-          user: userId,
-          type: 'comment_reply',
-          message: `${req.user.displayName} commented on ${series.title}.`,
-          series: series._id,
-        }))
-      );
+      await Notification.insertMany([...notifyTargets].map((userId) => ({
+        user: userId,
+        type: 'comment_reply',
+        message: `${req.user.displayName} commented on ${series.title}.`,
+        series: series._id,
+      })));
     }
 
     res.status(201).json({ success: true, comment });
@@ -90,13 +110,15 @@ const remove = asyncHandler(async (req, res) => {
   const comment = await Comment.findById(req.params.id);
   if (!comment || comment.isRemoved) throw ApiError.notFound('Comment not found.');
 
-  const isAuthor = comment.user.toString() === req.user.id;
+  const isAuthor = String(comment.user) === String(req.user.id);
   const isAdmin = req.user.role === 'admin';
   if (!isAuthor && !isAdmin) throw ApiError.forbidden('You can only delete your own comments.');
 
   comment.isRemoved = true;
   await comment.save();
-  await recomputeRating(comment.series);
+  try { await recomputeRating(comment.series); } catch (err) {
+    console.error('[comments] rating recompute failed:', err.message);
+  }
 
   res.json({ success: true, message: 'Comment removed.' });
 });
