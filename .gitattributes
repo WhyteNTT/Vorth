@@ -1,0 +1,27 @@
+# Normalise line endings so the working tree matches the repository and diffs
+# stay readable on every platform.
+* text=auto eol=lf
+
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+
+# Never touch these.
+uploads/** binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.mp4  binary
+*.docx binary
+
+# Local secrets and scratch files.
+.env      -export-ignore
+node_modules/  export-ignore
