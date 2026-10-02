@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 
 const env = require('./config/env');
@@ -13,6 +14,11 @@ const ApiError = require('./utils/ApiError');
 
 const app = express();
 const frontendRoot = path.join(__dirname, '../../vorth-frontend');
+
+// Only trust X-Forwarded-* when explicitly told to; otherwise a client could
+// spoof its IP and walk straight through the rate limiters.
+if (env.trustProxy) app.set('trust proxy', 1);
+
 const allowedOrigins = new Set([
   ...env.clientOrigins,
   `http://localhost:${env.port}`,
@@ -20,12 +26,40 @@ const allowedOrigins = new Set([
 ]);
 
 // --- security & parsing ---
+//
+// Content-Security-Policy is declared explicitly. Helmet's default is
+// `default-src 'self'` with no connect-src, which silently blocked the
+// frontend's fetch() calls whenever the API was on a different origin than
+// the page (e.g. opening the page on 127.0.0.1 while the API was on localhost).
+const connectSources = ["'self'", ...allowedOrigins];
+const imageSources = ["'self'", 'data:', 'blob:', ...allowedOrigins];
+
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow the frontend to load /uploads images
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      // The UI builds gradients and backgrounds via inline style attributes.
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      scriptSrc: ["'self'"],
+      // Allow the API to be reached from the configured frontend origins.
+      connectSrc: connectSources,
+      imgSrc: imageSources,
+      mediaSrc: imageSources,
+      objectSrc: ["'none'"],
+      frameAncestors: ["'self'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
 }));
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+// Required to read the httpOnly refresh-token cookie on /api/auth/*.
+app.use(cookieParser());
 
 if (env.nodeEnv !== 'test') {
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
