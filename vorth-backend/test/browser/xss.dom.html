@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vorth XSS regression — DOM level</title>
+</head>
+<body>
+<!--
+  Loads the real vorth-frontend/lib/safe.js and replays every payload that
+  previously executed, asserting that the browser's HTML parser does not
+  create any event-handler attribute or injected element.
+
+  Driven by test/browser/run.mjs via the CDP browser harness.
+-->
+<div id="host"></div>
+<script src="../../../vorth-frontend/lib/safe.js"></script>
+<script>
+window.__RESULT__ = { passed: 0, failed: 0, cases: [] };
+
+function record(name, ok, detail) {
+  window.__RESULT__.cases.push({ name, ok, detail });
+  if (ok) window.__RESULT__.passed += 1; else window.__RESULT__.failed += 1;
+}
+
+const ATTR = 'https://evil.tld/x" onmouseover="window.__FIRED__=true" x="';
+const IMG = '<img src="x-does-not-exist" onerror="window.__FIRED__=true">';
+const host = document.getElementById('host');
+
+function reset() { host.innerHTML = ''; window.__FIRED__ = false; }
+
+/* ---- 1. cover artwork ------------------------------------------------ */
+reset();
+{
+  const series = { coverImage: ATTR };
+  const url = VorthSafe.resolveMediaUrl(series.coverImage, 'https://vorth.test');
+  const attr = url ? ` data-cover="${VorthSafe.escapeHtml(url)}"` : '';
+  host.innerHTML = `<div class="card-cover"${attr}></div>`;
+  const el = host.querySelector('.card-cover');
+  record('coverImage cannot inject an event handler attribute',
+    !el.hasAttribute('onmouseover') && !el.outerHTML.includes('onmouseover'),
+    el.outerHTML);
+
+  // Applying through the CSSOM must also be inert.
+  VorthSafe.applyBackgroundImage(el, ATTR, 'https://vorth.test');
+  record('applyBackgroundImage rejects a non-allowlisted reference',
+    el.style.backgroundImage === '' || !el.style.backgroundImage.includes('evil.tld'),
+    JSON.stringify(el.style.backgroundImage));
+}
+
+/* ---- 2. a legitimate cover still works -------------------------------- */
+reset();
+{
+  const el = document.createElement('div');
+  host.appendChild(el);
+  const ok = VorthSafe.applyBackgroundImage(el, '/uploads/1712-ab12cd34ef56.jpg', 'https://vorth.test');
+  record('a legitimate /uploads/ cover is applied',
+    ok && el.style.backgroundImage.includes('/uploads/1712-ab12cd34ef56.jpg'),
+    el.style.backgroundImage);
+}
+
+/* ---- 3. comic pages --------------------------------------------------- */
+reset();
+{
+  const pages = [ATTR, '/uploads/p1.png'];
+  host.innerHTML = pages.map((seed, i) => {
+    const url = VorthSafe.resolveMediaUrl(seed, 'https://vorth.test');
+    return `<div class="comic-page" data-i="${i}"${url ? ` data-cover="${VorthSafe.escapeHtml(url)}"` : ''}></div>`;
+  }).join('');
+  VorthSafe.applyCovers(host, 'https://vorth.test');
+  const els = [...host.querySelectorAll('.comic-page')];
+  const anyHandler = els.some((e) => e.hasAttribute('onmouseover'));
+  const applied = els.map((e) => e.style.backgroundImage.includes('evil.tld'));
+  record('comic pages cannot inject handlers; only the valid page is painted',
+    !anyHandler && !applied.some(Boolean),
+    els.map((e) => e.outerHTML).join(' | '));
+}
+
+/* ---- 4. genre / tag chips -------------------------------------------- */
+reset();
+{
+  const genres = [IMG].map((g) => `<span class="chip"> ${VorthSafe.escapeHtml(g)}</span>`).join('');
+  const tags = [IMG].map((t) => `<span class="chip">#${VorthSafe.escapeHtml(t)}</span>`).join('');
+  host.innerHTML = `<div class="detail-tags">${genres}${tags}</div>`;
+  const injected = host.querySelectorAll('img');
+  record('genres/tags do not create an injected <img>',
+    injected.length === 0, `injected images: ${injected.length}`);
+}
+
+/* ---- 5. ranking labels ----------------------------------------------- */
+reset();
+{
+  const genres = [IMG];
+  host.innerHTML = `<span class="rank-tags">${genres.map((g) => VorthSafe.escapeHtml(g)).join(' · ')}</span>`;
+  record('ranking genre labels do not create an injected <img>',
+    host.querySelectorAll('img').length === 0,
+    host.innerHTML);
+}
+
+/* ---- 6. nothing fired spontaneously ---------------------------------- */
+setTimeout(() => {
+  record('no injected handler executed on its own', window.__FIRED__ !== true,
+    `__FIRED__ = ${String(window.__FIRED__)}`);
+  window.__DONE__ = true;
+}, 300);
+</script>
+</body>
+</html>

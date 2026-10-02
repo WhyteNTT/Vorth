@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test + lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: vorth-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vorth-backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Every module loads (catches syntax/import errors)
+        run: npm run smoke
+
+      - name: Unit + HTTP tests
+        run: npm test
+
+      - name: Browser XSS regression
+        run: npm run test:browser:ci
+
+  postgres-migration:
+    name: Schema applies to a real PostgreSQL
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vorth
+          POSTGRES_PASSWORD: vorth
+          POSTGRES_DB: vorth_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U vorth"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: vorth-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vorth-backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Apply schema (must be idempotent)
+        env:
+          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
+          VORTH_LIVE_DB: '1'
+          DATABASE_SSL: 'false'
+          JWT_SECRET: ci-secret-not-used-for-real-signing
+        run: node -e "require('./src/config/env'); require('./src/config/db').connectDB().then(()=>console.log('schema ok')).catch(e=>{console.error(e.message);process.exit(1)})"
+
+      - name: Apply schema a second time (idempotency)
+        env:
+          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
+          VORTH_LIVE_DB: '1'
+          DATABASE_SSL: 'false'
+          JWT_SECRET: ci-secret-not-used-for-real-signing
+        run: node -e "require('./src/config/env'); require('./src/config/db').connectDB().then(()=>console.log('schema still ok')).catch(e=>{console.error(e.message);process.exit(1)})"
+
+      - name: Verify the indexes and tables exist
+        env:
+          PGPASSWORD: vorth
+        run: |
+          psql -h 127.0.0.1 -U vorth -d vorth_test -c "\dt"
+          psql -h 127.0.0.1 -U vorth -d vorth_test -c "SELECT tablename FROM pg_indexes WHERE schemaname='current_schema()' ORDER BY tablename;"
+          # Every model must map to a table that actually exists.
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='current_schema' AND tablename IN ('users','series','chapters','comments','notifications','reading_progress','dmca_reports','view_events','refresh_tokens','auth_tokens','rate_limit_buckets');" | grep -qx 11
+
+      - name: Upgrades a database created by the PREVIOUS schema
+        env:
+          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_migration
+          VORTH_LIVE_DB: '1'
+          DATABASE_SSL: 'false'
+          JWT_SECRET: ci-secret-not-used-for-real-signing
+          NODE_ENV: test
+        run: |
+          psql -h 127.0.0.1 -U vorth -d postgres -c "CREATE DATABASE vorth_migration;" || true
+          # Recreate the schema exactly as the previous release left it, then
+          # prove the current code migrates it in place without losing data.
+          node scripts/applyLegacySchema.js
+          PGPASSWORD=vorth psql -h 127.0.0.1 -U vorth -d vorth_migration -c "INSERT INTO users (display_name, username, email, password, agreed_to_terms_at) VALUES ('Legacy','legacy_user','legacy@example.com','hash', now());"
+          node scripts/verifyMigration.js
+          # db:wipe must still work against the migrated schema.
+          node scripts/wipeDatabase.js --confirm --users
+
+      - name: Live conformance suite (executes the generated SQL)
+        env:
+          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
+          VORTH_LIVE_DB: '1'
+          DATABASE_SSL: 'false'
+          JWT_SECRET: ci-secret-not-used-for-real-signing
+        run: npm run test:live
+
+      - name: Seed script is idempotent and produces a browsable catalog
+        env:
+          DATABASE_URL: postgresql://vorth:vorth@127.0.0.1:5432/vorth_test
+          DATABASE_SSL: 'false'
+          JWT_SECRET: ci-secret-not-used-for-real-signing
+          MAIL_TRANSPORT: disabled
+        run: |
+          npm run db:seed -- --confirm
+          # A second run must not duplicate anything.
+          npm run db:seed -- --confirm
+          PGPASSWORD=vorth psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
+            "SELECT (SELECT count(*) FROM series) AS series, (SELECT count(*) FROM chapters) AS chapters, (SELECT count(*) FROM comments) AS comments;"
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
+            "SELECT count(*) FROM series WHERE (\"views\"->>'alltime')::int > 0;" | grep -qx t
