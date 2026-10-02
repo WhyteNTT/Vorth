@@ -18,6 +18,10 @@ requireEnv();
 
 module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
+  // Render (and most hosts) terminate TLS and forward the real protocol/client
+  // in headers; without this req.ip is the proxy and every rate limiter sees
+  // one shared address.
+  trustProxy: process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1',
   port: parseInt(process.env.PORT, 10) || 5000,
   databaseUrl: process.env.DATABASE_URL,
   databaseSsl: process.env.DATABASE_SSL !== 'false',
@@ -31,7 +35,51 @@ module.exports = {
   rateLimitWindowMinutes: parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 10) || 15,
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 300,
   authRateLimitMaxRequests: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS, 10) || 20,
+  // 'postgres' shares counters across instances and survives a deploy.
+  // 'memory' is the zero-dependency default for a single process.
+  rateLimitStore: process.env.RATE_LIMIT_STORE === 'postgres' ? 'postgres' : 'memory',
   minimumUserAge: parseInt(process.env.MINIMUM_USER_AGE, 10) || 13,
   dmcaContactEmail: process.env.DMCA_CONTACT_EMAIL || 'dmca@example.com',
   supportContactEmail: process.env.SUPPORT_CONTACT_EMAIL || 'support@example.com',
+
+  // ---- sessions ----
+  refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS, 10) || 30,
+  refreshCookieName: process.env.REFRESH_COOKIE_NAME || 'vorth_refresh',
+  // When false, refresh tokens are only returned in the JSON body. Useful for
+  // clients that cannot hold cookies (native apps).
+  refreshCookieEnabled: process.env.REFRESH_COOKIE !== 'false',
+  secureCookies: process.env.SECURE_COOKIES !== 'false',
+
+  // ---- email verification / password reset ----
+  requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === 'true',
+  emailVerificationHours: parseInt(process.env.EMAIL_VERIFICATION_HOURS, 10) || 24,
+  passwordResetHours: parseInt(process.env.PASSWORD_RESET_HOURS, 10) || 1,
+  publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''),
+
+  // ---- mail transport ----
+  // 'console' logs the message instead of sending it (development default).
+  // 'smtp' sends for real; see src/services/mailer.js.
+  mailTransport: ['console', 'smtp', 'disabled'].includes(process.env.MAIL_TRANSPORT)
+    ? process.env.MAIL_TRANSPORT : 'console',
+  mailFrom: process.env.MAIL_FROM || 'no-reply@vorth.example',
+  smtpHost: process.env.SMTP_HOST || '',
+  smtpPort: parseInt(process.env.SMTP_PORT, 10) || 587,
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPass: process.env.SMTP_PASS || '',
+  smtpSecure: process.env.SMTP_SECURE === 'true',
+
+  // ---- object storage for uploads ----
+  // 'local' writes to uploads/; 's3' targets any S3-compatible service
+  // (AWS S3, Cloudflare R2, MinIO, Backblaze B2).
+  storageDriver: process.env.STORAGE_DRIVER === 's3' ? 's3' : 'local',
+  s3Bucket: process.env.S3_BUCKET || '',
+  s3Region: process.env.S3_REGION || 'auto',
+  s3Endpoint: process.env.S3_ENDPOINT || '',
+  s3AccessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+  s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+  // When the bucket is private, uploads are direct-to-storage via a
+  // presigned PUT and reads are served through a presigned GET.
+  s3SignedUrls: process.env.S3_SIGNED_URLS !== 'false',
+  s3UrlTtlSeconds: parseInt(process.env.S3_URL_TTL_SECONDS, 10) || 3600,
+  s3PublicBaseUrl: (process.env.S3_PUBLIC_BASE_URL || '').replace(/\/$/, ''),
 };
