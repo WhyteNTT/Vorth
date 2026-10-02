@@ -67,7 +67,7 @@ const COMPARATORS = {
 };
 const SUPPORTED = new Set([
   ...Object.keys(COMPARATORS), '$in', '$nin', '$exists', '$regex', '$options',
-  '$or', '$and', '$not', '$elemMatch', '$text',
+  '$or', '$and', '$not', '$elemMatch', '$text', '$substring',
 ]);
 
 /**
@@ -95,11 +95,33 @@ function buildCondition(filter, model, params) {
     if (key === '$not') {
       return `NOT (${buildCondition(value, model, params)})`;
     }
+    /*
+     * Full-text search over the generated search_vector column.
+     *
+     * websearch_to_tsquery handles quoted phrases, OR and negation, and never
+     * raises on odd input. The GIN index on search_vector is what makes this
+     * usable on a real catalogue.
+     *
+     * It cannot match a partial word - "star" will not find "Starlight" - so the
+     * model runs a second pass with $substring when this returns nothing. That
+     * keeps the common path on the index instead of ORing ILIKE into every
+     * query, which would force a sequential scan.
+     */
     if (key === '$text') {
       const search = String((value && value.$search) || '').trim();
       if (!search) return 'TRUE';
-      const p = params.add(`%${search}%`);
-      return `(COALESCE(${columnExpr('title', model)}::text,'') || ' ' || COALESCE(${columnExpr('author', model)}::text,'') || ' ' || COALESCE(${columnExpr('synopsis', model)}::text,'')) ILIKE ${p}`;
+      if (!columnExists(model, 'search_vector')) {
+        // Not migrated yet. Degrade to the old behaviour rather than error.
+        return buildSubstringCondition(search, model, params);
+      }
+      return `${columnExpr('search_vector', model)} @@ websearch_to_tsquery('english', ${params.add(search)})`;
+    }
+
+    /* Second pass only: substring match, which full-text search will not do. */
+    if (key === '$substring') {
+      const search = String(value || '').trim();
+      if (!search) return 'TRUE';
+      return buildSubstringCondition(search, model, params);
     }
 
     const rawKey = key === '_id' ? 'id' : key;
@@ -202,6 +224,46 @@ function buildWhere(filter, model, params) {
   // buildCondition already parenthesises its AND-join, so don't wrap again.
   const clause = buildCondition(filter || {}, model, params);
   return { text: clause === 'TRUE' ? '' : ` WHERE ${clause}`, params };
+}
+
+/**
+ * True when the model's table is known to have this column.
+ *
+ * Lets a condition degrade gracefully on a database that predates a column,
+ * rather than failing every query with "column does not exist".
+ */
+function columnExists(model, name) {
+  const cols = model && model.columns;
+  if (!cols) return false;
+  if (cols instanceof Set) return cols.has(name);
+  if (Array.isArray(cols)) return cols.includes(name);
+  return Object.prototype.hasOwnProperty.call(cols, name);
+}
+
+/**
+ * Substring match across the searchable text fields.
+ *
+ * The second pass of $text. The wildcards are added to the bound value, never to
+ * the SQL text, so a search term cannot inject anything.
+ */
+function buildSubstringCondition(search, model, params) {
+  const p = params.add(`%${search}%`);
+  const fields = ['title', 'author', 'synopsis'].filter((f) => columnExists(model, f));
+  if (!fields.length) return 'FALSE';
+  return `(${fields.map((f) => `${columnExpr(f, model)} ILIKE ${p}`).join(' OR ')})`;
+}
+
+/**
+ * Relevance for $text results, so search can be ordered by how well something
+ * matches instead of by date.
+ *
+ * Returns a fragment holding one bound parameter, which the caller fills from
+ * the same search string, or null when there is no search_vector to rank
+ * against.
+ */
+function tsRankExpr(model, params, searchTerm) {
+  if (!columnExists(model, 'search_vector')) return null;
+  return `ts_rank_cd(${columnExpr('search_vector', model)}, websearch_to_tsquery('english', ${params.add(searchTerm || '')})`;
 }
 
 /** sort: { createdAt: -1, 'views.alltime': -1 } -> ORDER BY clause. */
@@ -334,5 +396,6 @@ function jsonIdExpr(path) {
 module.exports = {
   ident, camel, snake, isPlainObject, idOf, columnExpr,
   buildWhere, buildOrderBy, buildSelect, buildInsert, buildAssignments, buildUpdate, buildPaging, jsonIdExpr,
+  buildSubstringCondition, columnExists, tsRankExpr,
   Params,
 };

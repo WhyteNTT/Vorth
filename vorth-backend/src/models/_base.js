@@ -101,10 +101,36 @@ class Query {
     const orderText = this.opts.sort ? sql.buildOrderBy(this.opts.sort, this.model) : '';
     const paging = sql.buildPaging(this.opts, params);
 
-    const { rows } = await exec.query(
+    let { rows } = await exec.query(
       `SELECT${selectText || ' *'} FROM ${table}${whereText}${orderText}${paging}`,
       params.values
     );
+
+    /*
+     * Second pass. $text is an indexed tsvector match - fast, understands
+     * stemming, but it cannot match a partial word. Searching "light harbour"
+     * does not find "Harbour Lights", which is what a reader expects from a
+     * catalogue search box.
+     *
+     * ORing ILIKE into every query would defeat the GIN index and force a
+     * sequential scan on precisely the table people search, so the fallback
+     * only runs when the indexed pass found nothing. Common searches stay on
+     * the index; partial ones still work.
+     */
+    const searchTerm = this.filter && this.filter.$text && this.filter.$text.$search;
+    if (!rows.length && searchTerm) {
+      const retryParams = new sql.Params();
+      const retryWhere = sql.buildWhere(
+        { ...this.filter, $text: undefined, $substring: String(searchTerm) },
+        this.model,
+        retryParams
+      );
+      const retryPaging = sql.buildPaging(this.opts, retryParams);
+      ({ rows } = await exec.query(
+        `SELECT${selectText || ' *'} FROM ${table}${retryWhere.text}${orderText}${retryPaging}`,
+        retryParams.values
+      ));
+    }
 
     const items = rows.map(mapRow);
     if (this.op === 'one') {

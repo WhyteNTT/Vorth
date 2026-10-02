@@ -98,7 +98,21 @@ async function connectDB() {
     -- One row per (chapter, viewer, window). The UNIQUE constraint is what
     -- makes view counting idempotent: a repeat read inside the same window
     -- conflicts and does not increment anything.
-    CREATE TABLE IF NOT EXISTS view_events (
+    -- Full-text search vector over the three fields a reader would search by.
+  -- Generated and stored: no application code updates it, and adding it to a
+  -- populated table computes it for the existing rows.
+  ALTER TABLE series
+    ADD COLUMN IF NOT EXISTS search_vector tsvector
+    GENERATED ALWAYS AS (
+      setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+      setweight(to_tsvector('english', coalesce(author, '')), 'B') ||
+      setweight(to_tsvector('english', coalesce(artist, '')), 'B') ||
+      setweight(to_tsvector('english', coalesce(synopsis, '')), 'C')
+    ) STORED;
+
+  CREATE INDEX IF NOT EXISTS idx_series_search ON series USING GIN (search_vector);
+
+  CREATE TABLE IF NOT EXISTS view_events (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       series uuid NOT NULL REFERENCES series(id) ON DELETE CASCADE,
       chapter uuid NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
