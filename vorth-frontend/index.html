@@ -361,6 +361,36 @@
       </div>
     </div>
 
+    <!-- ---------- ACCOUNT: password reset & email verification ---------- -->
+    <div id="accountPanel" class="auth-wrap hidden">
+      <div class="auth-card">
+        <h1 class="glitter-text" data-text="Your account">Your account</h1>
+
+        <form id="forgotForm" class="auth-form">
+          <label>Email address<input type="email" id="forgotEmail" required placeholder="you@example.com"></label>
+          <button type="submit" class="btn btn-primary">Email me a reset link</button>
+          <p class="form-hint" id="forgotHint"></p>
+        </form>
+
+        <form id="resetForm" class="auth-form hidden">
+          <label>New password<input type="password" id="resetPassword" required placeholder="••••••••"></label>
+          <label>Confirm new password<input type="password" id="resetConfirm" required placeholder="••••••••"></label>
+          <button type="submit" class="btn btn-primary">Set new password</button>
+          <p class="form-hint" id="resetHint"></p>
+        </form>
+
+        <form id="verifyForm" class="auth-form hidden">
+          <p class="form-hint" id="verifyHint"></p>
+          <button type="submit" class="btn btn-primary">Confirm my email address</button>
+        </form>
+
+        <div class="auth-actions">
+          <button type="button" class="btn btn-ghost sm" id="accountForgotBtn">Forgot password</button>
+          <button type="button" class="btn btn-ghost sm" id="accountVerifyBtn" hidden>Resend verification email</button>
+        </div>
+      </div>
+    </div>
+
     <div id="profileLoggedIn" class="hidden">
       <div class="profile-head">
         <div class="avatar-ring" id="profileAvatar"></div>
@@ -439,6 +469,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="lib/safe.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
