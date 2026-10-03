@@ -217,6 +217,45 @@ test('every table is either modelled or deliberately raw', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Documentation drift.
+ * ------------------------------------------------------------------ */
+
+test('every npm script is documented in the README', () => {
+  /*
+   * Seven were undocumented, including `test:e2e` - the one command somebody
+   * verifying this work would reach for first. A script nobody can find is a
+   * script nobody runs, and the suite it guards is the suite that finds bugs.
+   */
+  const scripts = Object.keys(JSON.parse(read(BACKEND, 'package.json')).scripts);
+  const readme = read(BACKEND, 'README.md');
+  const missing = scripts.filter((s) => !readme.includes(s)).sort();
+  assert.deepEqual(missing, [],
+    `these npm scripts are not mentioned in README.md:\n  ${missing.join('\n  ')}`);
+});
+
+test('every test file is reachable from some script', () => {
+  /*
+   * `test/run.js` with no arguments runs everything, so a file nothing names is
+   * still executed - but only by `npm test`. If a suite needs a database or a
+   * browser it has to be named in test:live or test:e2e, or it will sit skipped
+   * in the default run and nobody will notice it is not really running.
+   */
+  const scripts = JSON.parse(read(BACKEND, 'package.json')).scripts;
+  const named = ['test', 'test:unit', 'test:http', 'test:live', 'test:browser', 'test:e2e']
+    .map((s) => scripts[s] || '')
+    .join(' ');
+
+  const files = fs.readdirSync(path.join(BACKEND, 'test'))
+    .filter((f) => /\.test\.(c|m)?js$/.test(f));
+  const unreachable = files.filter((f) => !named.includes(f)).sort();
+
+  assert.deepEqual(unreachable, [],
+    'these test files are not named in any npm script, so nothing but the bare `npm test` '
+    + 'ever runs them - and if they need a database or browser they will sit skipped:\n  '
+    + unreachable.join('\n  '));
+});
+
+/* ------------------------------------------------------------------ *
  * Frontend assets.
  * ------------------------------------------------------------------ */
 

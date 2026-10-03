@@ -289,22 +289,47 @@ UPDATE users SET role = 'admin' WHERE username = 'your_username';
 ## 8. Testing
 
 ```bash
-npm test            # unit + HTTP + XSS + session + infrastructure suites
+npm test            # everything that needs no database and no browser
+npm run test:unit   # the fast subset, named explicitly
 npm run lint        # ESLint
+npm run lint:fix    # ESLint, autofixable rules
 npm run smoke       # require() every module - catches syntax/import errors
+npm run test:http   # the real Express app over HTTP
 npm run test:live   # executes the generated SQL against a real PostgreSQL
+npm run test:browser # the XSS payloads replayed in a real browser
+npm run test:e2e    # the real server, the real page, a real browser
+npm run test:watch  # re-run on change
 ```
 
-| Script | Covers |
+| Script | Needs | Covers |
+|---|---|---|
+| `test` | nothing | unit + HTTP + XSS + session + infrastructure |
+| `test:unit` | nothing | the fast subset, listed by name |
+| `test:http` | nothing | routing order, auth/ownership, validation chains, library shape |
+| `test:browser` | Chromium already installed | the XSS payloads in a real browser's HTML parser |
+| `test:browser:ci` | network access | the same, installing Chromium with its system dependencies first |
+| `test:live` | PostgreSQL | every query against a real database |
+| `test:e2e` | PostgreSQL + Chromium | sign-up, publish, read, save, copyright claims, page weight |
+| `smoke` | nothing | `require()` every module |
+| `lint` | nothing | ESLint |
+
+What each area covers within those scripts:
+
+| Suite | Covers |
 |---|---|
 | `sqlBuilder` | SQL generation, operator validation, injection resistance |
-| `models` | dirty tracking, batched populate, `deleteMany` filters, single-statement writes, atomic upsert, password stripping, `aggregate` |
-| `http` | the real Express app over HTTP: routing order, auth/ownership, validation chains, library shape |
+| `models` | dirty tracking, batched populate, `deleteMany` filters, single-statement writes, atomic upsert, password stripping |
+| `aggregate` | grouping by any column, compound keys, and the ungrouped case |
+| `businessDays` | business-day arithmetic, against dates worked out by hand |
+| `counterNotice` | the counter-notice flow: statutory statements, forwarded text, route ordering |
+| `claims` | the publisher-facing claim markup, including that it escapes |
+| `configDrift` | `.env.example` completeness, schema/model/verifier agreement, asset budgets |
+| `nullFilter` | `$ne: null` and `$nin: [null]`, which compile to predicates matching nothing if wrong |
+| `columnUpgrade` | that boot repairs a schema missing a column, and issues no `ALTER` when it does not |
 | `session` | token hashing, cookie hardening, rotation, enumeration-equivalence |
 | `infrastructure` | storage drivers, both rate-limit stores |
 | `views` | view de-duplication |
 | `xss` | escaping rules, plus a guard against reintroducing raw interpolation into `script.js` |
-| `browser` | the same payloads replayed in a real browser |
 | `postgres.live` | executes every query against a real PostgreSQL |
 
 The database is replaced by a recording double (`test/helpers/fakePool.js`)
@@ -377,6 +402,11 @@ Two things reduce the exposure:
   schema once. It is **not** a deployment mechanism — a real instance must be
   able to bring its own schema up, which is why the DDL lives in `connectDB()`
   rather than in a separate migration step.
+  **A new test file that asserts boot applies the schema must delete that flag
+  for the duration of the test.** Otherwise `connectDB()` returns before issuing
+  any DDL, and the failure reads as "the production guard broke" rather than "the
+  flag was still set". `postgres.live.test.js`, `columnUpgrade.serial.test.js`
+  and `hostGuard.test.js` all do this.
 
 For a rolling deploy where old and new instances overlap, deploy with
 `VORTH_SKIP_SCHEMA=1` on the second and later instances, or accept a brief window

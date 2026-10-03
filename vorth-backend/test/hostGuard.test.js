@@ -201,6 +201,20 @@ test('the same database is allowed once it looks like a deployment', async () =>
   const savedPool = db.pool;
   const statements = [];
 
+  /*
+   * VORTH_SKIP_SCHEMA cleared for this test.
+   *
+   * test/run.js sets it so the live files stop racing each other over the DDL,
+   * which is right for them and wrong here: this test asserts that boot *does*
+   * apply the schema, and under the flag connectDB() returns before issuing any
+   * DDL. Left set, it fails with "the schema should have been applied" - which
+   * reads like the production guard broke, when in fact the guard was never
+   * reached. Same opt-out postgres.live.test.js and columnUpgrade.serial.test.js
+   * make, for the same reason.
+   */
+  const savedSkip = process.env.VORTH_SKIP_SCHEMA;
+  delete process.env.VORTH_SKIP_SCHEMA;
+
   try {
     env.databaseUrl = NEON;
     process.env.NODE_ENV = 'production';
@@ -219,6 +233,8 @@ test('the same database is allowed once it looks like a deployment', async () =>
     db.setPool(savedPool);
     env.databaseUrl = savedUrl;
     process.env.NODE_ENV = savedNodeEnv;
+    if (savedSkip === undefined) delete process.env.VORTH_SKIP_SCHEMA;
+    else process.env.VORTH_SKIP_SCHEMA = savedSkip;
   }
 });
 
