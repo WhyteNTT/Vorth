@@ -56,6 +56,14 @@ const UNIQUE_CONSTRAINTS = [
 const REQUIRED_INDEXES = [
   'idx_series_owner', 'idx_series_listing', 'idx_series_popular',
   'idx_series_rating', 'idx_series_title', 'idx_series_genres', 'idx_series_tags',
+  // The GIN index over the tsvector. Search is the reason it exists: without it
+  // every query falls back to a sequential scan of `series` and nothing else
+  // fails visibly - search still returns the right answers, just slowly, on a
+  // table that grows without limit.
+  'idx_series_search',
+  // Backs the daily ranking, which orders on a jsonb expression rather than a
+  // column, so it needs its own index to be usable at all.
+  'idx_series_daily',
   'idx_chapters_series', 'idx_comments_series', 'idx_comments_user',
   'idx_progress_user', 'idx_notif_user', 'idx_notif_unread',
   'idx_refresh_user', 'idx_refresh_active',
