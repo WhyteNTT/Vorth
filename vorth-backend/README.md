@@ -312,6 +312,36 @@ suite, the seed script's idempotency, and an upgrade from the previous
 schema. It runs on Node 22 and deliberately supplies **no `.env`**, so the
 suite is proven to pass without local configuration leaking in.
 
+### Warning: a local `.env` may point at production
+
+`DATABASE_URL` in a local `.env` is very often a real, remote, production
+database. Anything that boots the app - a script, a REPL, a health check -
+connects to it, and applying the schema is part of booting.
+
+`connectDB()` refuses to run schema against a managed production host (Neon,
+RDS, Azure, Cloud SQL, Supabase, PlanetScale, DigitalOcean, Xata,
+CockroachDB) unless the process is deploying:
+
+| Condition | Schema applied? |
+|---|---|
+| `NODE_ENV=production` | yes - this is a deployment |
+| local host, or a non-managed remote | yes - this is development |
+| managed production host, anything else | **refused** |
+| any of the above plus `VORTH_ALLOW_SCHEMA_ON_PRODUCTION=1` | yes, deliberately |
+
+`NODE_ENV=prod` is **not** `production` and is not honoured; guessing at a
+near-miss would defeat the point. The refusal happens before the pool is
+touched, so nothing is sent. `VORTH_SCHEMA_GUARD_DEBUG=1` logs the target and
+the decision on every boot.
+
+The rules live in `src/config/hostGuard.js` and are shared with the
+destructive-test guard below, so the two cannot drift apart.
+
+This guard exists because it was needed. A script run while building this
+applied four new tables and two indexes to a live Neon database, because
+`dotenv` had loaded that URL and nothing was checking. `test/hostGuard.test.js`
+replays that exact incident and fails if it ever becomes possible again.
+
 ### Warning: `test:live` refuses to touch a real database
 
 `test:live` executes `DELETE` statements. `DATABASE_URL` in a local `.env` is

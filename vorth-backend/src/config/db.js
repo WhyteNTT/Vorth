@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const env = require('./env');
+const { assertSchemaTargetAllowed } = require('./hostGuard');
 
 const pool = new Pool({
   connectionString: env.databaseUrl,
@@ -41,8 +42,41 @@ async function withTransaction(fn) {
   }
 }
 
+/**
+ * Opens the pool and brings the schema up to date.
+ *
+ * This issues CREATE TABLE, ALTER TABLE and CREATE INDEX, so before it does
+ * anything it checks that the target is one where writing schema is expected.
+ *
+ * A local `.env` frequently points at a real production database. Any script
+ * that boots the app - a health check, a script, a stray REPL - then migrates
+ * production silently, because dotenv loaded that URL. That is not
+ * hypothetical: it happened here, applying four new tables and two indexes to a
+ * live Neon database that nobody had asked to touch.
+ *
+ * The rule is deployment versus accident, not local versus remote, because a
+ * real deployment must be able to bring its own schema up on boot:
+ *
+ *   NODE_ENV=production                   allowed - this is a deployment
+ *   local or non-managed host             allowed - this is development
+ *   managed production host, otherwise    refused
+ *
+ * Set VORTH_ALLOW_SCHEMA_ON_PRODUCTION=1 to override the last case.
+ */
 async function connectDB() {
-  await pool.query(`
+  const verdict = assertSchemaTargetAllowed(env.databaseUrl, process.env);
+  if (!verdict.ok) {
+    const error = new Error(`[db] ${verdict.reason}`);
+    error.code = 'VORTH_SCHEMA_TARGET_REFUSED';
+    throw error;
+  }
+  if (process.env.VORTH_SCHEMA_GUARD_DEBUG === '1' && verdict.target) {
+    console.log(`[db] schema target ${verdict.target.database}@${verdict.target.host} allowed`);
+  }
+
+  // Through getPool(), not the captured `pool`, so setPool() is honoured here
+  // as it is everywhere else.
+  await getPool().query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
     CREATE TABLE IF NOT EXISTS users (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), display_name text NOT NULL,

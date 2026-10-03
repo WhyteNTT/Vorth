@@ -61,7 +61,16 @@ test('ALLOW_REMOTE is still not enough on a managed production host without expl
   assert.equal(overridden.target.host, 'ep-xyz-pooler.us-east-2.aws.neon.tech');
 });
 
-test('reports the parsed target so callers can log what they are about to touch', () => {
+test('reports the classified target so callers can log what they are about to touch', () => {
   const r = assertSafeTarget(LOCAL_TEST_DB, { VORTH_LIVE_DB: '1' });
-  assert.deepEqual(r.target, { host: '127.0.0.1', port: '5432', database: 'vorth_test' });
+  // The target carries the verdicts as well as the coordinates, so a refusal
+  // message can explain *why* something looked safe or unsafe.
+  assert.deepEqual(r.target, {
+    host: '127.0.0.1',
+    port: '5432',
+    database: 'vorth_test',
+    isLocal: true,
+    isManagedProduction: false,
+    nameLooksDisposable: true,
+  });
 });
