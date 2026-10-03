@@ -602,6 +602,251 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
   }
 });
 
+/*
+ * The landing page's first load, measured.
+ *
+ * This exists because of a 2.1 MB background video scraped from Klickpin.com and
+ * committed to the repository. It was invisible - `.bg-video-wrap` sat at
+ * z-index -1 behind an opaque `body` background - and it never played, with
+ * readyState 0 and networkState 3 the whole time. The browser still fetched it on
+ * every first visit, so a decorative element that was not on screen cost 2.1 MB
+ * of third-party content per new reader.
+ *
+ * A budget turns "someone should look at that" into a build failure. It is loose
+ * enough not to be annoying: the whole page is CSS, one script, one 70 KB logo and
+ * a handful of small API calls.
+ */
+/*
+ * Mobile-only controls must actually be mobile-only.
+ *
+ * Found by screenshotting the landing page at desktop width: a stray × sat in the
+ * middle of the nav rail. `.nav-close{ display: none }` was declared before
+ * `.icon-btn{ ... display: flex }`, both are a single class, so the later rule
+ * won. Nothing about that is visible in the CSS - it only shows up rendered, which
+ * is why it is asserted here at both widths rather than left to review.
+ */
+/*
+ * The decorative glyph must not sit on top of the series title.
+ *
+ * It did, at every width. The glyph is absolutely positioned bottom-left, and the
+ * cover's title was a bare text node - which inside `display: flex` becomes an
+ * anonymous flex item, laid out in exactly that corner. So the glyph covered the
+ * first few characters of every title on the page.
+ *
+ * Nothing in the markup said so: the CSS comment claimed bottom-left was free,
+ * which was true of `.card-save` and `.card-type-tag` and false of the title.
+ * Boxes overlapping is not proof of a paint-order bug on its own, so this asserts
+ * which element is actually on top at the glyph's centre, and that the title is a
+ * real element rather than an anonymous flex item.
+ */
+test('end to end: the card glyph never covers the series title', { skip }, async () => {
+  const server = await startServer();
+  const browser = await getBrowser();
+
+  try {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      try {
+        await page.goto(`${server.base}/`, { waitUntil: 'networkidle' });
+        await page.waitForSelector('#trendingRow .card-cover', { timeout: 15000 });
+        await page.waitForTimeout(300);
+
+        const covers = await page.$$('#trendingRow .card-cover');
+        for (let i = 0; i < Math.min(covers.length, 4); i += 1) {
+          // The trending row is a horizontal carousel, so later cards are scrolled
+          // off to the right. elementFromPoint returns null outside the viewport,
+          // which reads as "nothing is on top" rather than "we measured nothing".
+          // eslint-disable-next-line no-await-in-loop
+          await covers[i].scrollIntoViewIfNeeded();
+
+          // eslint-disable-next-line no-await-in-loop
+          const r = await page.evaluate((index) => {
+            const cover = [...document.querySelectorAll('#trendingRow .card-cover')][index];
+            const glyph = cover.querySelector('.glyph');
+            const title = cover.querySelector('.cover-title');
+            if (!glyph || !title) {
+              return { note: 'the cover title is not an element, so it is an anonymous '
+                + 'flex item and its position is whatever the flex layout happens to give it' };
+            }
+            const gr = glyph.getBoundingClientRect();
+            const tr = title.getBoundingClientRect();
+            const top = document.elementFromPoint(
+              Math.round(gr.left + gr.width / 2),
+              Math.round(gr.top + gr.height / 2)
+            );
+            return {
+              title: title.textContent.slice(0, 24),
+              glyphZ: getComputedStyle(glyph).zIndex,
+              titleZ: getComputedStyle(title).zIndex,
+              measured: top !== null,
+              topIsTitle: top === title,
+              topClass: top ? (top.className || top.tagName) : null,
+              overlapping: gr.left < tr.right && tr.left < gr.right
+                && gr.top < tr.bottom && tr.top < gr.bottom,
+              // The title has to actually be readable, not merely present.
+              titleVisible: tr.width > 0 && tr.height > 0 && title.textContent.trim().length > 0,
+            };
+          }, i);
+
+          assert.equal(r.note, undefined,
+            `card ${i} at ${viewport.width}px: ${r.note}`);
+          assert.ok(r.measured,
+            `card ${i} at ${viewport.width}px: could not measure - the card is outside the `
+            + 'viewport, so this would pass without checking anything');
+          assert.ok(r.titleVisible, `card ${i} has no visible title at ${viewport.width}px`);
+          assert.ok(r.topIsTitle,
+            `card ${i} at ${viewport.width}px: the glyph paints over the title "`
+            + `${r.title}" - the topmost element at the glyph's centre is ${r.topClass}`);
+          assert.ok(
+            Number(r.titleZ) > Number(r.glyphZ),
+            `card ${i} at ${viewport.width}px: title z-index ${r.titleZ} is not above `
+            + `glyph z-index ${r.glyphZ}`
+          );
+        }
+      } finally {
+        await closeQuietly(() => context.close());
+      }
+    }
+  } finally {
+    await server.shutdown();
+    // The browser is shared across the file via getBrowser(); do not close it here.
+  }
+});
+
+test('end to end: mobile-only controls are hidden on desktop and shown on mobile', { skip }, async () => {
+  const server = await startServer();
+  const browser = await getBrowser();
+
+  const visible = async (viewport, selector) => {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${server.base}/`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(400);
+      // return await, deliberately. `return promise` in a try/finally releases
+      // the context before the promise settles, so the evaluate races
+      // context.close() and fails with "Target page, context or browser has been
+      // closed" - which reads like a browser problem and is not one.
+      return await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return { present: false };
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        // Whether it is actually on screen. An element inside a display:none
+        // parent still computes its own `display` as flex, so the child's own
+        // computed value says nothing about visibility - which is exactly how the
+        // stray × went unnoticed.
+        let rendered = true;
+        for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+          const s = getComputedStyle(node);
+          if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0) {
+            rendered = false;
+            break;
+          }
+        }
+        return {
+          present: true,
+          display: style.display,
+          visibility: style.visibility,
+          rendered,
+          onScreen: rect.width > 0 && rect.height > 0
+            && rect.right > 0 && rect.bottom > 0
+            && rect.left < window.innerWidth && rect.top < window.innerHeight,
+        };
+      }, selector);
+    } finally {
+      await closeQuietly(() => context.close());
+    }
+  };
+
+  try {
+    const DESKTOP = { width: 1280, height: 900 };
+    const MOBILE = { width: 390, height: 844 };
+
+    /* --- the mobile close button ------------------------------------- */
+    const closeDesktop = await visible(DESKTOP, '#navCloseBtn');
+    assert.ok(closeDesktop.present, 'the nav close button is missing entirely');
+    assert.equal(closeDesktop.rendered, false,
+      'the mobile nav close button is rendered on desktop');
+    assert.equal(closeDesktop.onScreen, false,
+      'the mobile nav close button occupies space on desktop');
+
+    const closeMobile = await visible(MOBILE, '#navCloseBtn');
+    assert.equal(closeMobile.rendered, true,
+      'the nav close button is not available on mobile, so the drawer cannot be closed');
+
+    /* --- and the mobile menu button is the other way round -------------- */
+    const burgerMobile = await visible(MOBILE, '#mobileMenuBtn');
+    assert.equal(burgerMobile.rendered, true,
+      'there is no way to open the nav drawer on mobile');
+
+    const burgerDesktop = await visible(DESKTOP, '#mobileMenuBtn');
+    assert.equal(burgerDesktop.rendered, false,
+      'the mobile menu button is rendered on desktop');
+  } finally {
+    await server.shutdown();
+    // The browser is deliberately not closed: getBrowser() memoises one instance
+    // for the whole file, so closing it here leaves every later test holding a
+    // dead browser. The contexts are what this test owns.
+  }
+});
+
+test('end to end: the landing page is light and has no hidden media', { skip }, async () => {
+  // 600 KB of transferred bytes for the document, CSS, script, image and API.
+  // The point is the order of magnitude, not the exact figure.
+  const BUDGET_BYTES = 600 * 1024;
+
+  const server = await startServer();
+  const browser = await getBrowser();
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    const transfers = [];
+    page.on('response', async (res) => {
+      const url = res.url();
+      if (!url.startsWith(server.base)) return;
+      const type = res.request().resourceType();
+      // Content-Length is absent on a 206, and the landing page is small enough
+      // that measuring the body is cheap and always right.
+      const declared = Number(res.headers()['content-length'] || 0);
+      let size = declared;
+      if (!size) {
+        try { size = (await res.body()).length; } catch (_) { size = 0; }
+      }
+      transfers.push({ url, type, size });
+    });
+
+    await page.goto(`${server.base}/`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(1000);
+
+    // No media at all on the landing page. There is nothing decorative to play.
+    const media = transfers.filter((t) => t.type === 'media');
+    assert.deepEqual(
+      media.map((m) => m.url), [],
+      `the landing page fetched media: ${media.map((m) => `${m.type} ${m.url}`).join(', ')}`
+    );
+
+    // And no video element left behind, which would still cost a fetch even
+    // though the browser had nothing to show.
+    const leftover = await page.evaluate(() => document.querySelectorAll('video, audio, iframe').length);
+    assert.equal(leftover, 0, `the page still has ${leftover} media element(s)`);
+
+    const total = transfers.reduce((sum, t) => sum + t.size, 0);
+    assert.ok(
+      total <= BUDGET_BYTES,
+      `the landing page transferred ${(total / 1024).toFixed(0)} KB, over the `
+      + `${(BUDGET_BYTES / 1024).toFixed(0)} KB budget:\n`
+      + transfers.sort((a, b) => b.size - a.size).slice(0, 6)
+        .map((t) => `    ${(t.size / 1024).toFixed(0)} KB  ${t.type}  ${t.url}`).join('\n')
+    );
+  } finally {
+    await server.shutdown();
+    await closeQuietly(() => context.close());
+  }
+});
+
 test('end to end: the public rankings endpoint serves without error', { skip }, async () => {
   const server = await startServer();
   const browser = await getBrowser();

@@ -9,10 +9,29 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="bg-video-wrap" aria-hidden="true">
-  <video autoplay muted loop playsinline>
-    <source src="From Klickpin.com- Need fresh inspiration Steal these creative weekend DIY ideas youll want to recreate this weekend designed to feel inspiring us (1)~2.mp4" type="video/mp4">
-</div>
+<!--
+  The decorative background is CSS only: a base colour plus two radial gradients
+  on `body`, with a sparkle canvas over it.
+
+  There used to be a background video here - a 2.1 MB clip scraped from
+  Klickpin.com, committed to the repository. It was removed because it was not
+  earning its place:
+    - it was never visible. `.bg-video-wrap` sat at z-index -1 behind an opaque
+      `body` background, so readers saw the gradient and never the video;
+    - it never played. readyState stayed 0 and networkState 3 - HAVE_NOTHING and
+      NETWORK_NO_SOURCE - so there was nothing to see even if it had been visible;
+    - the browser still fetched it on every first visit, so it cost 2.1 MB of
+      third-party content for a decorative element that was not on screen;
+    - it was scraped from a content-aggregation site, so the licence for using it
+      here was never established.
+  It was also malformed: the <video> element was never closed, and only the
+  browser's error correction hid that.
+
+  If a background video is wanted again it needs to be one you have the right to
+  ship, small enough not to matter on the landing page, and actually visible -
+  and test/e2e.test.js now fails the build if the page's first load pulls more
+  than the page-weight budget below.
+-->
 
 <!-- ============ SPARKLE CANVAS (decorative, behind everything) ============ -->
 <canvas id="bg-sparkle" aria-hidden="true"></canvas>

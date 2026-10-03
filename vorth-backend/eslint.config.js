@@ -88,6 +88,7 @@ module.exports = [
         window: 'readonly',
         document: 'readonly',
         localStorage: 'readonly',
+        getComputedStyle: 'readonly',
         // The frontend bundle's globals, as index.html loads them.
         VorthSafe: 'readonly',
         VorthClaims: 'readonly',
