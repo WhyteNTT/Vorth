@@ -91,10 +91,19 @@ services:
       - key: AUTH_RATE_LIMIT_MAX_REQUESTS
         value: '20'
 
-      # Refuse to boot on a configuration error rather than coming up healthy
-      # with a feature silently dead. Set to '0' to boot anyway and read the log.
+      # 0 = boot and report problems in the log; 1 = refuse to boot on a
+      # configuration error.
+      #
+      # This starts at 0 on purpose. A first deploy cannot yet have working mail
+      # or object storage, both of which need credentials that only exist after
+      # the service does, so '1' here would be an immediate crash loop on a
+      # blueprint that is in fact correct.
+      #
+      # Set it to '1' before serving the public. At that point it is the right
+      # setting: the alternative is coming up healthy with password reset that
+      # reaches nobody and uploads that vanish on the next deploy.
       - key: VORTH_STRICT_CONFIG
-        value: '1'
+        value: '0'
 
       # ---- Set these in the dashboard before going public ----
       - key: CLIENT_ORIGINS

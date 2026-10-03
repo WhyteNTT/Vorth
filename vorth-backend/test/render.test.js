@@ -87,9 +87,15 @@ test('the security-relevant defaults are right for production', () => {
   assert.equal(env.REQUIRE_EMAIL_VERIFICATION.value, 'false');
 });
 
-test('the blueprint refuses to boot on a configuration error', () => {
-  assert.equal(env.VORTH_STRICT_CONFIG.value, '1',
-    'without this, preflight only warns and the service comes up healthy with a dead feature');
+test('the strict config gate is documented and defaults off for a first deploy', () => {
+  // A first deploy cannot yet have working mail or object storage, so the gate
+  // starts off and the service reports what is missing in its log. Turning it on
+  // is a deliberate act before going public - see the comment in the blueprint.
+  assert.equal(env.VORTH_STRICT_CONFIG.value, '0');
+  assert.match(raw, /Set it to '1' before serving the public/,
+    'the blueprint must say when to turn the gate on');
+  assert.match(raw, /crash loop/,
+    'the reason for the default should be stated where an operator will read it');
 });
 
 test('nothing secret is committed', () => {

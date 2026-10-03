@@ -128,6 +128,29 @@ function refreshSession(){
   }
   return refreshInFlight;
 }
+/*
+ * True when the response came from something that is not this application's
+ * API: a static host answering for /api, a CDN 404, or a proxy error page.
+ *
+ * The API always speaks JSON, so a non-JSON error body, or one carrying a
+ * hosting provider's marker, means nobody is serving the API here.
+ */
+/*
+ * Turns a failed response into something a reader can act on.
+ *
+ * The wording lives in lib/apiError.js so it can be unit tested. Previously the
+ * message was whatever the server put in the body: with no API reachable, the
+ * front-end host answered for /api and visitors saw its error text verbatim,
+ * including an internal request id.
+ *
+ * There is deliberately no toast here. Every caller already toasts err.message
+ * in its own catch, so raising one here was immediately overwritten - the reader
+ * saw the two swap places rather than either one properly.
+ */
+function apiErrorMessage(response, payload){
+  return VorthApiError.apiErrorMessage(response.status, payload);
+}
+
 async function apiFetch(path, options={}){
   const buildUrl = (base) => path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`;
   const url = buildUrl(apiBase);
@@ -183,8 +206,7 @@ async function apiFetch(path, options={}){
     }
   }
   if(!response.ok){
-    const message = typeof payload === 'string' ? payload : payload?.message || payload?.error || 'Request failed';
-    throw new Error(message);
+    throw new Error(apiErrorMessage(response, payload));
   }
   return payload ?? {};
 }
