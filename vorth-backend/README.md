@@ -354,6 +354,35 @@ applied four new tables and two indexes to a live Neon database, because
 `dotenv` had loaded that URL and nothing was checking. `test/hostGuard.test.js`
 replays that exact incident and fails if it ever becomes possible again.
 
+### Booting several instances at once
+
+Applying the schema is **not** concurrency-safe. Every `CREATE INDEX` takes a
+`ShareLock` on its table even when it creates nothing, and that conflicts with
+the `RowExclusiveLock` any writer holds — so two processes applying the schema to
+one database at the same time can deadlock against each other. It is not
+hypothetical: the live suite deadlocked exactly this way, with `node --test`
+running four files in parallel, each calling `connectDB()`.
+
+Two things reduce the exposure:
+
+- **Column upgrades are conditional.** `ADD COLUMN IF NOT EXISTS` also takes an
+  `AccessExclusiveLock` even when the column exists, which was the worse half of
+  the problem. Boot now reads `information_schema` first and issues only the
+  `ALTER`s that are genuinely missing, so an up-to-date database takes no
+  exclusive lock at all. `test/columnUpgrade.test.js` pins that.
+- **`VORTH_SKIP_SCHEMA=1`** connects without touching the schema at all, for the
+  case where the schema is already known good and only a connection is wanted.
+  `test/run.js` sets it automatically for the live suite, after preparing the
+  schema once. It is **not** a deployment mechanism — a real instance must be
+  able to bring its own schema up, which is why the DDL lives in `connectDB()`
+  rather than in a separate migration step.
+
+For a rolling deploy where old and new instances overlap, deploy with
+`VORTH_SKIP_SCHEMA=1` on the second and later instances, or accept a brief window
+in which writes block behind `CREATE INDEX`. Both `CREATE TABLE IF NOT EXISTS`
+and `CREATE INDEX IF NOT EXISTS` are individually correct; it is only running
+them concurrently that is not.
+
 ### Warning: `test:live` refuses to touch a real database
 
 `test:live` executes `DELETE` statements. `DATABASE_URL` in a local `.env` is

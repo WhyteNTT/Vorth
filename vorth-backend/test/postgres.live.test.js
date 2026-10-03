@@ -73,8 +73,45 @@ function models() {
 test('schema bootstrap is valid and idempotent', async (t) => {
   if (!guard.ok) return t.skip(SKIP_REASON);
   if (!await canConnect()) return t.skip({ skip: 'no reachable PostgreSQL' });
+
+  /*
+   * The flag is cleared for this test on purpose.
+   *
+   * test/run.js sets VORTH_SKIP_SCHEMA so the parallel live files stop racing
+   * each other over the DDL, which is right for them and wrong here: this test
+   * exists to check the bootstrap, and under the flag connectDB() returns before
+   * issuing any DDL. Left alone it would pass while proving nothing - a false
+   * pass in the one test whose whole job is to catch a broken schema.
+   *
+   * The assertion below is the guard on that: if the flag ever stops being
+   * clearable, this test fails instead of quietly checking the wrong code path.
+   */
+  const flag = process.env.VORTH_SKIP_SCHEMA;
+  delete process.env.VORTH_SKIP_SCHEMA;
+  t.after(() => {
+    if (flag !== undefined) process.env.VORTH_SKIP_SCHEMA = flag;
+  });
+
+  assert.notEqual(
+    process.env.VORTH_SKIP_SCHEMA, '1',
+    'VORTH_SKIP_SCHEMA is still set, so connectDB() would skip the DDL and this '
+    + 'test would assert nothing about the bootstrap'
+  );
+
   await database().connectDB();
   await database().connectDB(); // second run must be a no-op
+
+  // And the flag has to work, or run.js's fix is a comment.
+  process.env.VORTH_SKIP_SCHEMA = '1';
+  const before = await database().pool.query(
+    `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = current_schema()`
+  );
+  await database().connectDB();
+  const after = await database().pool.query(
+    `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = current_schema()`
+  );
+  assert.equal(after.rows[0].n, before.rows[0].n, 'VORTH_SKIP_SCHEMA still created something');
+
   const { rows } = await database().pool.query(
     `SELECT count(*)::int AS n FROM pg_tables
       WHERE schemaname = current_schema()
@@ -86,6 +123,43 @@ test('schema bootstrap is valid and idempotent', async (t) => {
     `SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname = current_schema()`
   );
   assert.ok(idx.rows[0].n >= 15, `expected the documented indexes, found ${idx.rows[0].n}`);
+});
+
+test('a schema-prepared connection really does no DDL', async (t) => {
+  if (!guard.ok) return t.skip(SKIP_REASON);
+  if (!await canConnect()) return t.skip({ skip: 'no reachable PostgreSQL' });
+
+  /*
+   * The live suite depends on this flag: run.js sets it so N test files do not
+   * each run CREATE INDEX against one database, which deadlocks them against each
+   * other. If the flag stopped working, the suite would go back to deadlocking -
+   * so it is worth a test that would notice immediately rather than a flake.
+   */
+  await database().connectDB();
+
+  const marker = `vorth_skip_probe_${Date.now().toString(36)}`;
+  await database().pool.query(
+    `CREATE TABLE IF NOT EXISTS ${marker} (id int PRIMARY KEY)`
+  );
+  const flag = process.env.VORTH_SKIP_SCHEMA;
+  process.env.VORTH_SKIP_SCHEMA = '1';
+  try {
+    await database().connectDB();
+    await database().pool.query(
+      `CREATE TABLE IF NOT EXISTS ${marker}_second (id int PRIMARY KEY)`
+    );
+  } finally {
+    await database().pool.query(`DROP TABLE IF EXISTS ${marker}_second`);
+    await database().pool.query(`DROP TABLE IF EXISTS ${marker}`);
+    if (flag === undefined) delete process.env.VORTH_SKIP_SCHEMA;
+    else process.env.VORTH_SKIP_SCHEMA = flag;
+  }
+
+  const { rows } = await database().pool.query(
+    `SELECT count(*)::int AS n FROM pg_tables
+      WHERE schemaname = current_schema() AND tablename LIKE '${marker}%'`
+  );
+  assert.equal(rows[0].n, 0, `probe tables were left behind: ${marker}`);
 });
 
 test('full write/read lifecycle against real SQL', async (t) => {

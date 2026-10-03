@@ -43,6 +43,128 @@ async function withTransaction(fn) {
 }
 
 /**
+ * Quotes a SQL identifier.
+ *
+ * The names come from the constants above, so they are trusted - but they are
+ * still interpolated, and a future edit should not be able to turn one into an
+ * injection. Cheap to enforce, and enforcing it here means the check cannot be
+ * forgotten when someone adds an upgrade entry.
+ */
+function ident(name) {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(String(name))) {
+    throw new Error(`Unsafe SQL identifier rejected in a column upgrade: ${name}`);
+  }
+  return `"${name}"`;
+}
+
+/**
+ * Columns added after their table first shipped.
+ *
+ * Kept as data rather than DDL in the schema string, because this is the one
+ * part of boot that has to run ALTER TABLE. Each entry is applied only if the
+ * catalog says the column is missing.
+ */
+const COLUMN_UPGRADES = [
+  ['users', 'email_verified_at', 'timestamptz', 'Email verification timestamp.'],
+  [
+    'chapters',
+    'takedown_reason',
+    'text',
+    'Why the chapter is removed. is_removed says *that* it is down; without this a '
+    + 'DMCA counter-notice cannot tell a chapter it removed from one an admin or a '
+    + 'court order removed since, and restoring the first would un-hide the second.',
+  ],
+  [
+    'dmca_reports',
+    'removal_series',
+    'uuid REFERENCES series(id)',
+    'The series this takedown actually removed, so a counter-notice knows what to '
+    + 'restore. Set when a takedown is accepted.',
+  ],
+  [
+    'dmca_reports',
+    'removal_chapter',
+    'uuid REFERENCES chapters(id)',
+    'The chapter this takedown actually removed.',
+  ],
+  [
+    'dmca_reports',
+    'removal_at',
+    'timestamptz',
+    'When the takedown removed something.',
+  ],
+];
+
+/**
+ * Relaxes a column that was first created NOT NULL.
+ *
+ * Listed separately because it is a constraint change rather than an addition, and
+ * it is the only unconditional ALTER left: there is no catalog check that means
+ * "already nullable", so it is made idempotent by comparing the catalog to the
+ * desired state first. On a database created by this version it never fires.
+ */
+const NULLABILITY_RELAXATIONS = [
+  [
+    'dmca_counter_notices',
+    'response_deadline',
+    // First created NOT NULL, on the reading that a counter-notice always has a
+    // deadline. It does not: the clock starts when the notice is forwarded to the
+    // complainant, and that can fail, so the deadline genuinely may not exist yet.
+    'response_deadline',
+  ],
+];
+
+/**
+ * Applies only the column upgrades that are actually outstanding.
+ *
+ * The point is what it does *not* do. `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+ * takes an ACCESS EXCLUSIVE lock in PostgreSQL even when the column already
+ * exists, so leaving it in the boot path meant two instances starting together -
+ * a rolling deploy, a scale-out, or two test files in one run - deadlocked against
+ * each other. Reading the catalog first makes the steady state issue no ALTER at
+ * all, and so take no lock.
+ *
+ * Columns are added nullable or with a default, so no existing row is rewritten.
+ */
+async function applyColumnUpgrades(pool) {
+  const missing = [];
+  for (const [table, column, type] of COLUMN_UPGRADES) {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
+      [table, column]
+    );
+    if (!rows.length) missing.push([table, column, type]);
+  }
+
+  const notNull = [];
+  for (const [table, column] of NULLABILITY_RELAXATIONS) {
+    const { rows } = await pool.query(
+      `SELECT is_nullable FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
+      [table, column]
+    );
+    if (rows.length && rows[0].is_nullable === 'NO') notNull.push([table, column]);
+  }
+
+  if (!missing.length && !notNull.length) return { applied: [], skipped: true };
+
+  const applied = [];
+  // Sequential on purpose: each ALTER takes an exclusive lock on its own table,
+  // and issuing them concurrently turns a schema upgrade into a deadlock against
+  // itself. There are five of them and they run once per deploy.
+  for (const [table, column, type] of missing) {
+    await pool.query(`ALTER TABLE ${ident(table)} ADD COLUMN ${ident(column)} ${type}`);
+    applied.push(`+ ${table}.${column}`);
+  }
+  for (const [table, column] of notNull) {
+    await pool.query(`ALTER TABLE ${ident(table)} ALTER COLUMN ${ident(column)} DROP NOT NULL`);
+    applied.push(`~ ${table}.${column} is now nullable`);
+  }
+  return { applied, skipped: false };
+}
+
+/**
  * Opens the pool and brings the schema up to date.
  *
  * This issues CREATE TABLE, ALTER TABLE and CREATE INDEX, so before it does
@@ -69,14 +191,46 @@ async function connectDB() {
     const error = new Error(`[db] ${verdict.reason}`);
     error.code = 'VORTH_SCHEMA_TARGET_REFUSED';
     throw error;
-  }
-  if (process.env.VORTH_SCHEMA_GUARD_DEBUG === '1' && verdict.target) {
+  }  if (process.env.VORTH_SCHEMA_GUARD_DEBUG === '1' && verdict.target) {
     console.log(`[db] schema target ${verdict.target.database}@${verdict.target.host} allowed`);
   }
 
   // Through getPool(), not the captured `pool`, so setPool() is honoured here
   // as it is everywhere else.
-  await getPool().query(`
+  const pool = getPool();
+
+  /*
+   * VORTH_SKIP_SCHEMA: connect, do not touch the schema.
+   *
+   * Every CREATE INDEX takes a ShareLock on its table even when it creates
+   * nothing, which conflicts with the RowExclusiveLock any writer holds. Boot is
+   * therefore not safe to run from several processes against one database at the
+   * same time - a rolling deploy, a scale-out, or several test files in one
+   * `node --test` run all deadlock against each other, which is exactly how the
+   * live suite failed here.
+   *
+   * This flag exists for the case where the schema is already known good and
+   * only a connection is wanted. It is not a way to deploy: a real instance must
+   * be able to bring its own schema up, which is the whole reason the DDL lives
+   * here rather than in a separate migration step.
+   */
+  /*
+   * Read from process.env rather than the `env` snapshot, deliberately.
+   *
+   * Everything else in this module goes through env, which is read once at
+   * require() time. This flag is different: it is a behavioural switch consulted
+   * at the moment of the call, and a test has to be able to clear it after the
+   * module is loaded and still get the real bootstrap. Reading the snapshot made
+   * that impossible, and quietly turned "schema bootstrap is valid and
+   * idempotent" into a test that asserted nothing.
+   */
+  const skipSchema = process.env.VORTH_SKIP_SCHEMA === '1' || process.env.VORTH_SKIP_SCHEMA === 'true';
+  if (skipSchema) {
+    console.log('[db] Connected to PostgreSQL (VORTH_SKIP_SCHEMA set; schema untouched)');
+    return;
+  }
+
+  await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
     CREATE TABLE IF NOT EXISTS users (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), display_name text NOT NULL,
@@ -87,8 +241,6 @@ async function connectDB() {
       ban_reason text, last_login_at timestamptz, email_verified_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
-    -- Added after the initial schema shipped; kept idempotent for upgrades.
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at timestamptz;
     CREATE TABLE IF NOT EXISTS series (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, slug text UNIQUE NOT NULL,
       type text NOT NULL, owner uuid NOT NULL REFERENCES users(id), author text NOT NULL, artist text,
@@ -105,12 +257,11 @@ async function connectDB() {
       -- Same role as series.takedown_reason: is_removed says *that* content is
       -- down, this says *why*. Without it a DMCA counter-notice cannot tell a
       -- chapter it removed from one an admin or a court order removed since, and
-      -- restoring the first would un-hide the second.
+      -- restoring the first would un-hide the second. Also added by the
+      -- conditional upgrade below, for a table created before this column existed.
       takedown_reason text,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(series,num)
     );
-    -- Additive: the column above is new, so an existing table still needs it.
-    ALTER TABLE chapters ADD COLUMN IF NOT EXISTS takedown_reason text;
     CREATE TABLE IF NOT EXISTS comments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), series uuid NOT NULL REFERENCES series(id), "user" uuid NOT NULL REFERENCES users(id),
       rating integer NOT NULL, text text NOT NULL, parent uuid REFERENCES comments(id), is_removed boolean NOT NULL DEFAULT false,
@@ -133,6 +284,11 @@ async function connectDB() {
       infringing_series uuid REFERENCES series(id), infringing_chapter uuid REFERENCES chapters(id), infringing_url_description text,
       good_faith_statement boolean NOT NULL, accuracy_statement boolean NOT NULL, signature text NOT NULL,
       status text NOT NULL DEFAULT 'pending', admin_notes text, resolved_at timestamptz, resolved_by uuid REFERENCES users(id),
+      -- Records that this takedown actually removed something, so a counter-notice
+      -- knows what to restore. is_removed on its own does not say *why* content is
+      -- down. Set when a takedown is accepted, and also added by the conditional
+      -- upgrade below for a table created before these columns existed.
+      removal_series uuid REFERENCES series(id), removal_chapter uuid REFERENCES chapters(id), removal_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
     );
 
@@ -187,15 +343,6 @@ async function connectDB() {
 
   CREATE INDEX IF NOT EXISTS idx_series_search ON series USING GIN (search_vector);
 
-  -- Records that a takedown actually removed something, so a counter-notice
-  -- knows what to restore. Set when a takedown is accepted.
-  ALTER TABLE dmca_reports
-    ADD COLUMN IF NOT EXISTS removal_series uuid REFERENCES series(id);
-  ALTER TABLE dmca_reports
-    ADD COLUMN IF NOT EXISTS removal_chapter uuid REFERENCES chapters(id);
-  ALTER TABLE dmca_reports
-    ADD COLUMN IF NOT EXISTS removal_at timestamptz;
-
   /*
    * A counter-notice is the alleged infringer's reply to an accepted takedown.
    *
@@ -239,12 +386,6 @@ async function connectDB() {
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   );
-
-  -- The column was first created NOT NULL, on the reading that a counter-notice
-  -- always has a deadline. It does not: the clock starts when the notice is
-  -- forwarded to the complainant, and that can fail. Relax it so a failed
-  -- forward is recorded as "not yet forwarded" instead of being unrecordable.
-  ALTER TABLE dmca_counter_notices ALTER COLUMN response_deadline DROP NOT NULL;
 
   -- One counter-notice per takedown: a second would restart the clock and let a
   -- subscriber extend the deadline indefinitely.
@@ -319,6 +460,25 @@ async function connectDB() {
     CREATE INDEX IF NOT EXISTS idx_authtok_expiry    ON auth_tokens (expires_at);
     CREATE INDEX IF NOT EXISTS idx_ratelimit_window  ON rate_limit_buckets (window_started_at);
   `);
+
+  /*
+   * Column upgrades, after the CREATE statements above and not before them.
+   *
+   * Order matters: an ALTER against a table that does not exist yet fails, so on
+   * a brand new database this has to follow the schema. Running it first would
+   * break the first boot of every fresh deployment.
+   *
+   * PostgreSQL takes an ACCESS EXCLUSIVE lock for ALTER TABLE even when the
+   * statement does nothing, so `ADD COLUMN IF NOT EXISTS` against a column that
+   * already exists still locks the table against every reader and writer. That
+   * made two instances booting at the same time deadlock against each other - a
+   * rolling deploy, a scale-out, or simply two processes in one test run. Reading
+   * the catalog first means the steady state issues no ALTER at all, and so takes
+   * no lock.
+   */
+  const upgrades = await applyColumnUpgrades(pool);
+  if (!upgrades.skipped) console.log(`[db] column upgrades applied: ${upgrades.applied.join(', ')}`);
+
   console.log('[db] Connected to PostgreSQL (schema + indexes ensured)');
 }
 
@@ -328,4 +488,8 @@ module.exports = {
   setPool,
   connectDB,
   withTransaction,
+  // Exported for tests: the upgrade step has to be provable as a no-op on an
+  // up-to-date schema, which is the property that keeps boot lock-free.
+  _applyColumnUpgrades: applyColumnUpgrades,
+  _columnUpgrades: COLUMN_UPGRADES,
 };

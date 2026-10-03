@@ -24,6 +24,10 @@ router.post(
   counterNoticeController.submitCounterNotice
 );
 
+// Authenticated: the takedowns against the caller's own content, with the id
+// they need to counter-notice. Before "/:id", deliberately.
+router.get('/mine', protect, counterNoticeController.listMyTakedowns);
+
 // Admin only: counter-notice queue. Before "/:id", deliberately.
 router.get('/counter-notices', protect, restrictTo('admin'), counterNoticeController.listCounterNotices);
 router.get('/counter-notices/:id', protect, restrictTo('admin'), counterNoticeController.getCounterNotice);

@@ -62,6 +62,15 @@ module.exports = {
     .map((d) => d.trim())
     .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
 
+  // ---- schema safety ----
+  // Connect without applying the schema, for when it is already known good.
+  // Applying schema is not safe from several processes at once, and CREATE INDEX
+  // takes a lock on its table even when it creates nothing. Not a deployment
+  // mechanism - a real instance must be able to bring its own schema up.
+  skipSchema: process.env.VORTH_SKIP_SCHEMA === '1' || process.env.VORTH_SKIP_SCHEMA === 'true',
+  allowSchemaOnProduction: process.env.VORTH_ALLOW_SCHEMA_ON_PRODUCTION === '1'
+    || process.env.VORTH_ALLOW_SCHEMA_ON_PRODUCTION === 'true',
+
   // ---- sessions ----
   refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS, 10) || 30,
   refreshCookieName: process.env.REFRESH_COOKIE_NAME || 'vorth_refresh',

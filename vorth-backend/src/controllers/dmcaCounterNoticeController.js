@@ -425,11 +425,80 @@ async function restoreLapsed(options = {}) {
   return { checked: due.length, outcomes };
 }
 
+// GET /api/dmca/mine — the takedowns against the caller's own content.
+//
+// This is what makes a counter-notice reachable. The endpoint is keyed on the
+// takedown id, and nothing else in the product shows a publisher that id, so
+// without this the whole flow exists but cannot be used.
+//
+// Only accepted takedowns appear. A claim still under review is not actionable
+// and telling the publisher about it would disclose an unreviewed accusation
+// against them, so the conservative reading wins.
+//
+// The complainant's identity is deliberately absent. §512(g)(3)(B) needs the
+// subscriber to be able to identify the material they are contesting, so the
+// work description is included; names, email addresses and postal addresses are
+// not, because they are the complainant's personal data and the subscriber has
+// no need for them.
+const listMyTakedowns = asyncHandler(async (req, res) => {
+  const mySeries = await Series.find({ owner: req.user.id }).select('id').exec();
+  const seriesIds = mySeries.map((s) => s._id);
+
+  const myChapters = seriesIds.length
+    ? await Chapter.find({ series: { $in: seriesIds } })
+      .select('id')
+      .exec()
+    : [];
+  const chapterIds = myChapters.map((c) => c._id);
+
+  const or = [];
+  if (seriesIds.length) or.push({ removalSeries: { $in: seriesIds } });
+  if (chapterIds.length) or.push({ removalChapter: { $in: chapterIds } });
+
+  const reports = or.length
+    ? await DMCAReport.find({ status: 'accepted', $or: or }).sort({ removalAt: -1 })
+    : [];
+
+  const reportIds = reports.map((r) => r._id);
+  const notices = reportIds.length
+    ? await DMCACounterNotice.find({ dmcaReport: { $in: reportIds } })
+    : [];
+  const byReport = new Map(notices.map((n) => [String(n.dmcaReport), n]));
+
+  res.json({
+    success: true,
+    takedowns: reports.map((r) => {
+      const notice = byReport.get(String(r._id));
+      return {
+        id: r._id,
+        // What was claimed, so the subscriber can satisfy 512(g)(3)(B).
+        copyrightedWorkDescription: r.copyrightedWorkDescription,
+        originalWorkUrl: r.originalWorkUrl ?? null,
+        infringingUrlDescription: r.infringingUrlDescription ?? null,
+        removedSeries: r.removalSeries ?? null,
+        removedChapter: r.removalChapter ?? null,
+        removedAt: r.removalAt ?? null,
+        canCounterNotice: !notice,
+        counterNotice: notice
+          ? {
+            id: notice._id,
+            status: notice.status,
+            // Shown to the subscriber because it is their deadline: they should
+            // know how long the material may stay down.
+            responseDeadline: notice.responseDeadline ?? null,
+          }
+          : null,
+      };
+    }),
+  });
+});
+
 module.exports = {
   submitCounterNotice,
   resolveCounterNotice,
   listCounterNotices,
   getCounterNotice,
+  listMyTakedowns,
   restoreLapsed,
   // exported for tests
   _forwardBody: forwardBody,

@@ -183,6 +183,54 @@ test('the counter-notice collection routes are declared before /:id', () => {
     idx('PATCH', '/counter-notices/:id') < idx('PATCH', '/:id'),
     `"PATCH /counter-notices/:id" must be declared before "PATCH /:id". Order was:\n  ${layers.join('\n  ')}`
   );
+  // The publisher-facing list has the same hazard: "mine" is not a UUID.
+  assert.ok(
+    idx('GET', '/mine') < idx('GET', '/:id'),
+    `"GET /mine" must be declared before "GET /:id". Order was:\n  ${layers.join('\n  ')}`
+  );
+  assert.equal(
+    layers.filter((l) => l === 'POST /').length, 1,
+    'the takedown notice endpoint must be declared exactly once'
+  );
+});
+
+test('the public DMCA endpoints are the only ones without a session', () => {
+  const router = require('../src/routes/dmcaRoutes');
+  const { protect } = require('../src/middleware/auth');
+
+  /*
+   * Compared by identity, not by function name: protect is wrapped in
+   * asyncHandler, so its .name is not 'protect' and a name check silently
+   * reports every route as unprotected.
+   */
+  const chains = router.stack.filter((l) => l.route).map((l) => ({
+    method: Object.keys(l.route.methods)[0].toUpperCase(),
+    path: l.route.path,
+    guarded: l.route.stack.some((s) => s.handle === protect),
+  }));
+
+  const unsecured = chains.filter((c) => !c.guarded);
+  assert.deepEqual(
+    unsecured.map((c) => `${c.method} ${c.path}`).sort(),
+    ['POST /', 'POST /:id/counter-notice'],
+    'only the takedown notice and the counter-notice may be public'
+  );
+  assert.equal(chains.length, 9, `expected 9 DMCA routes, found ${chains.length}`);
+});
+
+test('the publisher takedown list is scoped to a signed-in user', () => {
+  // An unauthenticated caller must not be able to enumerate takedowns. The
+  // handler reads req.user.id, so the route must have protect() in front of it.
+  const router = require('../src/routes/dmcaRoutes');
+  const { protect } = require('../src/middleware/auth');
+  const layer = router.stack.filter((l) => l.route).find(
+    (l) => l.route.path === '/mine' && Object.keys(l.route.methods).includes('get')
+  );
+  assert.ok(layer, 'GET /mine is not declared');
+  assert.ok(
+    layer.route.stack.some((s) => s.handle === protect),
+    'GET /mine has no protect()'
+  );
 });
 
 test('both public DMCA endpoints are rate limited', () => {

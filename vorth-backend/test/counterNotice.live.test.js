@@ -40,6 +40,7 @@ const Series = require('../src/models/Series');
 const Chapter = require('../src/models/Chapter');
 const DMCAReport = require('../src/models/DMCAReport');
 const DMCACounterNotice = require('../src/models/DMCACounterNotice');
+const Notification = require('../src/models/Notification');
 const dmcaController = require('../src/controllers/dmcaController');
 const counter = require('../src/controllers/dmcaCounterNoticeController');
 const { businessDaysBetween } = require('../src/services/businessDays');
@@ -58,7 +59,12 @@ function res() {
 }
 
 /**
- * Runs the terminal handler of a [validators..., asyncHandler] export.
+ * Runs a controller handler.
+ *
+ * Accepts either shape the controllers use: a bare asyncHandler, or the
+ * [validators..., asyncHandler] array, in which case the terminal handler is
+ * the one under test. Validation itself is covered by the HTTP suite; this
+ * bypasses it deliberately so the state machine can be driven directly.
  *
  * Settles when the handler either responds or calls next(err), whichever comes
  * first. An earlier version fell back to setImmediate, which raced the handler:
@@ -66,7 +72,7 @@ function res() {
  * calls that had in fact thrown.
  */
 function invoke(chain, req) {
-  const handler = chain[chain.length - 1];
+  const handler = typeof chain === 'function' ? chain : chain[chain.length - 1];
   return new Promise((resolve) => {
     const r = res();
     let settled = false;
@@ -199,13 +205,14 @@ function scenario(suffix, title) {
 /**
  * Teardown, in dependency order.
  *
- * Neither FK cascades: dmca_counter_notices.dmca_report and
- * dmca_reports.infringing_chapter both restrict. That is deliberate for a legal
- * record - a counter-notice is meaningless without its notice, and a takedown
- * should outlive the content it references - but it makes the order here
- * load-bearing rather than tidy.
+ * Nothing cascades: notifications reference the series, dmca_counter_notices
+ * reference the notice, and dmca_reports reference the content. All deliberate
+ * for a legal record - a counter-notice is meaningless without its notice, a
+ * takedown should outlive the content it references - but it makes the order
+ * here load-bearing rather than tidy.
  */
 async function cleanup({ owner, series }, report) {
+  await Notification.deleteMany({ user: owner.id });
   await DMCACounterNotice.deleteMany({ dmcaReport: report._id });
   await DMCAReport.deleteMany({ id: report._id });
   await Chapter.deleteMany({ series: series.id });
@@ -457,6 +464,92 @@ test('content removed for another reason survives a lapsed counter-notice', { sk
     );
   } finally {
     await cleanup(world, report);
+  }
+});
+
+test('accepting a takedown notifies the publisher and lets them find it', { skip: !process.env.VORTH_LIVE_DB }, async () => {
+  await db();
+  const admin = await adminUser();
+  const world = await scenario('f', 'Notify');
+
+  const report = await acceptTakedown(admin, world.chapter.id, world.series.id);
+
+  try {
+    /*
+     * DMCA_POLICY.md promises the publishing user is notified. If nothing creates
+     * that notification the policy is asserting something false - and the
+     * subscriber loses their chance to contest before they know anything
+     * happened.
+     */
+    const notifications = await Notification.find({ user: world.owner.id }).exec();
+    assert.equal(notifications.length, 1, 'the publisher was not notified');
+    const note = notifications[0];
+    assert.equal(note.type, 'dmca_takedown');
+    // The id has to be in the message: the counter-notice endpoint is keyed on
+    // it and nothing else exposes it, so a notification without it is a dead end.
+    assert.match(note.message, new RegExp(report._id), 'the notice does not carry the takedown id');
+    assert.match(note.message, /counter-notice/, 'the notice does not mention the remedy');
+
+    /*
+     * And the publisher can actually reach it: the endpoint is keyed on the
+     * takedown id, so without this list the flow exists but cannot be used.
+     */
+    const listed = await invoke(counter.listMyTakedowns, {
+      user: { id: world.owner.id },
+    });
+    assert.equal(listed.error, null, listed.error && listed.error.message);
+    assert.equal(listed.res.body.takedowns.length, 1, 'the publisher cannot see their own takedown');
+
+    const mine = listed.res.body.takedowns[0];
+    assert.equal(mine.id, report._id);
+    assert.equal(mine.canCounterNotice, true, 'the endpoint says the publisher cannot counter-notice');
+    assert.equal(mine.removedChapter, world.chapter.id);
+    // 512(g)(3)(B) needs the subscriber to know what was claimed.
+    assert.equal(mine.copyrightedWorkDescription, 'The Lantern, first edition');
+
+    /*
+     * The complainant's personal data must not be here. The subscriber needs to
+     * identify the material; they do not need the reporter's address.
+     */
+    const serialised = JSON.stringify(mine);
+    for (const field of ['reporterName', 'reporterEmail', 'reporterAddress', 'reporterOrganization']) {
+      assert.ok(!(field in mine), `${field} was exposed to the publisher`);
+    }
+    assert.ok(!serialised.includes('ada@example.test'), 'the complainant email leaked');
+    assert.ok(!serialised.includes('Example Press'), 'the complainant organisation leaked');
+    assert.ok(!serialised.includes('1 Press Row'), 'the complainant address leaked');
+
+    /* --- a stranger cannot see someone else's takedown --------------------- */
+    const stranger = await User.create({
+      displayName: 'Stranger', username: `${MARK}g`, email: `${MARK}g@example.test`,
+      password: 'correct horse battery',
+      agreedToTermsAt: new Date(), ageConfirmed: true,
+    });
+    const theirs = await invoke(counter.listMyTakedowns, { user: { id: stranger.id } });
+    assert.equal(theirs.error, null);
+    assert.equal(
+      theirs.res.body.takedowns.length, 0,
+      "one user's takedown list showed another user's content"
+    );
+    await User.deleteMany({ username: `${MARK}g` });
+
+    /* --- once countered, it is no longer open, and shows the deadline ------ */
+    const filed = await invoke(counter.submitCounterNotice, {
+      params: { id: report._id }, body: counterNoticeBody(),
+    });
+    assert.equal(filed.error, null, filed.error && filed.error.message);
+
+    const after = await invoke(counter.listMyTakedowns, { user: { id: world.owner.id } });
+    const row = after.res.body.takedowns[0];
+    assert.equal(row.canCounterNotice, false, 'a second counter-notice would be offered');
+    assert.ok(row.counterNotice, 'the publisher cannot see their own counter-notice');
+    assert.ok(
+      row.counterNotice.responseDeadline,
+      'the publisher cannot see the window their material may stay down for'
+    );
+  } finally {
+    await cleanup(world, report);
+    await User.deleteMany({ username: `${MARK}admin` });
   }
 });
 

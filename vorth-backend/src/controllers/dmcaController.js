@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
 const { withTransaction } = require('../config/db');
 const DMCAReport = require('../models/DMCAReport');
+const Notification = require('../models/Notification');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
 
@@ -156,6 +157,37 @@ const resolve = [
             isRemoved: true,
             takedownReason: reason,
           }, { client });
+        }
+
+        /*
+         * Tell the publisher, which the published policy promises.
+         *
+         * The notice carries the report id, because without it they cannot file a
+         * counter-notice: the endpoint is keyed on the takedown, and nothing else
+         * in the product exposes that id to them. A DMCA_POLICY.md clause saying
+         * "the publishing user is notified" is a legal commitment, and silence is
+         * how a subscriber loses their good-faith argument before they can make it.
+         */
+        const owners = new Set();
+        for (const id of [report.removalSeries, report.removalChapter]) {
+          if (!id) continue;
+          const holder = await Chapter.findById(id).select('series').exec(client)
+            || await Series.findById(id).select('owner').exec(client);
+          if (!holder) continue;
+          const ownerId = holder.series ? (await Series.findById(holder.series).select('owner').exec(client))?.owner
+            : holder.owner;
+          if (ownerId) owners.add(String(ownerId));
+        }
+        if (owners.size) {
+          await Notification.insertMany([...owners].map((userId) => ({
+            user: userId,
+            type: 'dmca_takedown',
+            message:
+              'Your content was removed in response to a copyright claim. '
+              + 'If you believe this was a mistake, you may file a counter-notice. '
+              + `Takedown reference: ${report._id}`,
+            series: report.removalSeries ?? null,
+          })), { client });
         }
       }
       return report;

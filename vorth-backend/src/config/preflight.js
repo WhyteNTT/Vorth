@@ -181,6 +181,28 @@ function inspect(env_ = env) {
       + 'Office before accepting takedown requests.');
   }
 
+  /* ---------------------------------------------------------------- *
+   * Schema
+   * ---------------------------------------------------------------- */
+  /*
+   * VORTH_SKIP_SCHEMA in production means this instance will never bring its own
+   * schema up, so it silently depends on some other instance having done it -
+   * and on that instance still existing. A deploy that moves the schema work to
+   * one instance and then scales that instance to zero leaves every remaining
+   * instance running against a schema nobody maintains.
+   *
+   * A warning rather than an error: it is a legitimate setting during a rolling
+   * deploy, where old and new overlap and the new one must not take table locks
+   * while the old one is still serving. The point is to make it a decision rather
+   * than something nobody remembers setting.
+   */
+  if (production && env_.skipSchema) {
+    add('warn', 'schema.skip',
+      'VORTH_SKIP_SCHEMA is set, so this instance will not apply the schema on boot.',
+      'Fine during a rolling deploy. Otherwise make sure another instance applies the schema, '
+      + 'and that it is not scaled to zero.');
+  }
+
   return out;
 }
 

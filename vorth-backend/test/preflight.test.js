@@ -40,6 +40,8 @@ const HEALTHY = {
   clientOrigins: ['https://vorth.example'],
   secureCookies: true,
   dmcaContactEmail: 'dmca@vorth.example',
+  skipSchema: false,
+  allowSchemaOnProduction: false,
 };
 
 function findingsFor(overrides) {
@@ -169,6 +171,38 @@ test('the placeholder DMCA address is flagged in production', () => {
     .includes('legal.dmca-placeholder'));
   assert.ok(!codes(findingsFor({ dmcaContactEmail: 'abuse@vorth.example' }), 'warn')
     .includes('legal.dmca-placeholder'));
+});
+
+test('VORTH_SKIP_SCHEMA in production is called out', () => {
+  /*
+   * A warning, not an error: it is legitimate during a rolling deploy, where the
+   * new instance must not take table locks while the old one still serves. But an
+   * instance that never applies its own schema silently depends on another one
+   * doing it, and on that one still existing - so it should never be a setting
+   * nobody remembers making.
+   */
+  const findings = findingsFor({ skipSchema: true });
+  const hit = findings.find((f) => f.code === 'schema.skip');
+  assert.ok(hit, 'no finding for VORTH_SKIP_SCHEMA in production');
+  assert.equal(hit.level, 'warn', 'a rolling deploy must not be fatal');
+  assert.match(hit.message, /will not apply the schema on boot/);
+  // The fix has to name the failure mode, not just restate the warning.
+  assert.match(hit.fix, /scaled to zero/);
+
+  // Unset, it must not appear at all - a warning nobody can act on is noise.
+  assert.equal(
+    findingsFor({}).some((f) => f.code === 'schema.skip'), false,
+    'the finding appears when the flag is not set'
+  );
+});
+
+test('VORTH_SKIP_SCHEMA outside production is not worth mentioning', () => {
+  assert.equal(
+    findingsFor({ nodeEnv: 'development', skipSchema: true })
+      .some((f) => f.code === 'schema.skip'),
+    false,
+    'the finding should be production-only'
+  );
 });
 
 test('every finding carries an actionable fix', () => {
