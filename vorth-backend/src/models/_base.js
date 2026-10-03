@@ -85,7 +85,10 @@ class Query {
 
   async run(overrideClient) {
     const exec = overrideClient || this.options.client || db.pool;
-    const { text: whereText, params } = sql.buildWhere(this.filter, this.model, new sql.Params());
+    const columns = await tableColumns(this.model.table, exec);
+    const { text: whereText, params } = sql.buildWhere(
+      this.filter, this.model, new sql.Params(), columns
+    );
     const table = ident(this.model.table);
 
     if (this.op === 'count') {
@@ -123,7 +126,8 @@ class Query {
       const retryWhere = sql.buildWhere(
         { ...this.filter, $text: undefined, $substring: String(searchTerm) },
         this.model,
-        retryParams
+        retryParams,
+        columns
       );
       const retryPaging = sql.buildPaging(this.opts, retryParams);
       ({ rows } = await exec.query(
@@ -360,7 +364,9 @@ class BaseModel {
    */
   static async deleteMany(filter = {}, options) {
     const exec = options && options.client ? options.client : db.pool;
-    const { text: whereText, params } = sql.buildWhere(filter, this, new sql.Params());
+    const { text: whereText, params } = sql.buildWhere(
+      filter, this, new sql.Params(), await tableColumns(this.table, exec)
+    );
     const { rowCount } = await exec.query(
       `DELETE FROM ${ident(this.table)}${whereText}`,
       params.values
@@ -372,7 +378,7 @@ class BaseModel {
   static async updateMany(filter, update, options) {
     const exec = options && options.client ? options.client : db.pool;
     const { assignments, params: updateParams } = sql.buildUpdate(this, update);
-    const where = sql.buildWhere(filter, this, updateParams);
+    const where = sql.buildWhere(filter, this, updateParams, await tableColumns(this.table, exec));
     const { rowCount } = await exec.query(
       `UPDATE ${ident(this.table)} SET ${assignments.join(', ')}${where.text}`,
       updateParams.values
@@ -419,7 +425,9 @@ class BaseModel {
 
   static async findOneAndDelete(filter, options) {
     const exec = options && options.client ? options.client : db.pool;
-    const { text: whereText, params } = sql.buildWhere(filter, this, new sql.Params());
+    const { text: whereText, params } = sql.buildWhere(
+      filter, this, new sql.Params(), await tableColumns(this.table, exec)
+    );
     const { rows } = await exec.query(
       `DELETE FROM ${ident(this.table)}${whereText} RETURNING *`,
       params.values
@@ -472,7 +480,10 @@ class BaseModel {
     const projectStage = stages.find((s) => '$project' in s);
 
     const params = new sql.Params();
-    const where = sql.buildWhere((matchStage && matchStage.$match) || {}, this, params);
+    const where = sql.buildWhere(
+      (matchStage && matchStage.$match) || {}, this, params,
+      await tableColumns(this.table, exec)
+    );
 
     // ---- no grouping: a single row over the whole matching set
     if (!groupStage) {

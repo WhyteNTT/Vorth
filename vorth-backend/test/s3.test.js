@@ -23,6 +23,11 @@
  *     path whenever a key was not URL-safe
  */
 
+process.env.DATABASE_URL ||= 'postgres://stub/stub';
+process.env.DATABASE_SSL = 'false';
+process.env.JWT_SECRET ||= 'test-secret';
+process.env.NODE_ENV = 'test';
+
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');

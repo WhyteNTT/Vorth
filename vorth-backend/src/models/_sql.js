@@ -75,7 +75,7 @@ const SUPPORTED = new Set([
  * Mongo equality against an array column means "array contains the value",
  * which maps to the jsonb `?` operator.
  */
-function buildCondition(filter, model, params) {
+function buildCondition(filter, model, params, columns) {
   if (!isPlainObject(filter)) throw new Error('Filter must be an object');
 
   const keys = Object.keys(filter);
@@ -90,10 +90,10 @@ function buildCondition(filter, model, params) {
         throw new Error(`${key} requires a non-empty array`);
       }
       const joiner = key === '$or' ? ' OR ' : ' AND ';
-      return clauses.map((c) => buildCondition(c, model, params)).join(joiner);
+      return clauses.map((c) => buildCondition(c, model, params, columns)).join(joiner);
     }
     if (key === '$not') {
-      return `NOT (${buildCondition(value, model, params)})`;
+      return `NOT (${buildCondition(value, model, params, columns)})`;
     }
     /*
      * Full-text search over the generated search_vector column.
@@ -110,9 +110,9 @@ function buildCondition(filter, model, params) {
     if (key === '$text') {
       const search = String((value && value.$search) || '').trim();
       if (!search) return 'TRUE';
-      if (!columnExists(model, 'search_vector')) {
+      if (!columnExists(columns, 'search_vector')) {
         // Not migrated yet. Degrade to the old behaviour rather than error.
-        return buildSubstringCondition(search, model, params);
+        return buildSubstringCondition(search, model, columns, params);
       }
       return `${columnExpr('search_vector', model)} @@ websearch_to_tsquery('english', ${params.add(search)})`;
     }
@@ -121,7 +121,7 @@ function buildCondition(filter, model, params) {
     if (key === '$substring') {
       const search = String(value || '').trim();
       if (!search) return 'TRUE';
-      return buildSubstringCondition(search, model, params);
+      return buildSubstringCondition(search, model, columns, params);
     }
 
     const rawKey = key === '_id' ? 'id' : key;
@@ -220,24 +220,34 @@ function buildCondition(filter, model, params) {
   return `(${parts.join(' AND ')})`;
 }
 
-function buildWhere(filter, model, params) {
+/**
+ * Builds the WHERE fragment.
+ *
+ * `columns` is the queried table's known column list, or undefined when the
+ * caller has not looked it up. Conditions that need to degrade gracefully on an
+ * older schema use it; conditions on a column every version has do not.
+ */
+function buildWhere(filter, model, params, columns) {
   // buildCondition already parenthesises its AND-join, so don't wrap again.
-  const clause = buildCondition(filter || {}, model, params);
+  const clause = buildCondition(filter || {}, model, params, columns);
   return { text: clause === 'TRUE' ? '' : ` WHERE ${clause}`, params };
 }
 
 /**
- * True when the model's table is known to have this column.
+ * True when the queried table is known to have this column.
  *
  * Lets a condition degrade gracefully on a database that predates a column,
  * rather than failing every query with "column does not exist".
+ *
+ * `columns` must be passed in. It is deliberately not read off the model: a
+ * model object has no such property, so inferring it here silently reported
+ * every column as missing.
  */
-function columnExists(model, name) {
-  const cols = model && model.columns;
-  if (!cols) return false;
-  if (cols instanceof Set) return cols.has(name);
-  if (Array.isArray(cols)) return cols.includes(name);
-  return Object.prototype.hasOwnProperty.call(cols, name);
+function columnExists(columns, name) {
+  if (!columns) return false;
+  if (columns instanceof Set) return columns.has(name);
+  if (Array.isArray(columns)) return columns.includes(name);
+  return Object.prototype.hasOwnProperty.call(columns, name);
 }
 
 /**
@@ -246,10 +256,10 @@ function columnExists(model, name) {
  * The second pass of $text. The wildcards are added to the bound value, never to
  * the SQL text, so a search term cannot inject anything.
  */
-function buildSubstringCondition(search, model, params) {
-  const p = params.add(`%${search}%`);
-  const fields = ['title', 'author', 'synopsis'].filter((f) => columnExists(model, f));
+function buildSubstringCondition(search, model, columns, params) {
+  const fields = ['title', 'author', 'synopsis'].filter((f) => columnExists(columns, f));
   if (!fields.length) return 'FALSE';
+  const p = params.add(`%${search}%`);
   return `(${fields.map((f) => `${columnExpr(f, model)} ILIKE ${p}`).join(' OR ')})`;
 }
 
@@ -261,8 +271,8 @@ function buildSubstringCondition(search, model, params) {
  * the same search string, or null when there is no search_vector to rank
  * against.
  */
-function tsRankExpr(model, params, searchTerm) {
-  if (!columnExists(model, 'search_vector')) return null;
+function tsRankExpr(model, columns, params, searchTerm) {
+  if (!columnExists(columns, 'search_vector')) return null;
   return `ts_rank_cd(${columnExpr('search_vector', model)}, websearch_to_tsquery('english', ${params.add(searchTerm || '')})`;
 }
 

@@ -17,6 +17,18 @@ const User = require('../src/models/User');
 /** run({ rows: {...} }, async (pool) => { ... }) */
 const run = (opts, fn) => withPool(createFakePool(opts), fn);
 
+/**
+ * The recorded statements of one kind, in order, excluding bookkeeping.
+ *
+ * Models look their table's column list up before building SQL, so the log
+ * opens with an information_schema query that is not part of what any of these
+ * tests are asserting about. Filtering it out here means an assertion can say
+ * "the SELECT" without caring how many lookups precede it.
+ */
+const statementsOf = (pool, verb) => pool.log.filter(
+  (e) => e.verb === verb && !/information_schema/.test(e.sql)
+);
+
 /* ------------------------------------------------------------------ *
  * Regression: the old shim loaded whole tables and filtered in JS.
  * ------------------------------------------------------------------ */
@@ -29,7 +41,7 @@ test('find() pushes filtering, sorting and paging into SQL', async () => {
       .populate('owner', 'username displayName')
       .exec();
 
-    const select = pool.log.find((e) => e.verb === 'SELECT');
+    const select = statementsOf(pool, 'SELECT').at(-1);
     assert.match(select.sql, /WHERE/);
     assert.match(select.sql, /ORDER BY "created_at" DESC/);
     assert.match(select.sql, /LIMIT \$2 OFFSET \$3/);
@@ -53,7 +65,7 @@ test('countDocuments uses COUNT(*) with the same predicate', async () => {
   await run({ rows: {}, countRows: [1, 2] }, async (pool) => {
     const total = await Series.countDocuments({ isRemoved: false });
     assert.equal(total, 2);
-    assert.match(pool.log[0].sql, /SELECT COUNT\(\*\)::int AS count FROM "series" WHERE/);
+    assert.match(statementsOf(pool, 'SELECT').at(-1).sql, /SELECT COUNT\(\*\)::int AS count FROM "series" WHERE/);
   });
 });
 
@@ -116,7 +128,7 @@ test('deleteMany() honours its filter', async () => {
 test('deleteMany() with no filter is explicit about being a full wipe', async () => {
   await run({ rows: {} }, async (pool) => {
     await Comment.deleteMany();
-    assert.equal(pool.log[0].sql, 'DELETE FROM "comments"');
+    assert.equal(statementsOf(pool, 'DELETE')[0].sql, 'DELETE FROM "comments"');
   });
 });
 
@@ -127,8 +139,8 @@ test('deleteMany() with no filter is explicit about being a full wipe', async ()
 test('updateMany() is a single statement with the predicate', async () => {
   await run({ rows: { notifications: [] } }, async (pool) => {
     await Notification.updateMany({ user: 'u1', isRead: false }, { $set: { isRead: true } });
-    assert.equal(pool.log.filter((e) => e.verb === 'UPDATE').length, 1);
-    const update = pool.log[0];
+    assert.equal(statementsOf(pool, 'UPDATE').length, 1);
+    const update = statementsOf(pool, 'UPDATE')[0];
     assert.match(update.sql, /UPDATE "notifications" SET "is_read" = \$1 WHERE/);
     assert.deepEqual(update.params, [true, 'u1', false]);
   });
@@ -137,7 +149,7 @@ test('updateMany() is a single statement with the predicate', async () => {
 test('updateMany() supports dotted jsonb paths via jsonb_set', async () => {
   await run({ rows: { series: [] } }, async (pool) => {
     await Series.updateMany({}, { $set: { 'views.daily': 0, lastDailyReset: new Date(0) } });
-    assert.match(pool.log[0].sql, /"views" = jsonb_set\(/);
+    assert.match(statementsOf(pool, 'UPDATE')[0].sql, /"views" = jsonb_set\(/);
   });
 });
 
@@ -270,7 +282,7 @@ test('aggregate() computes the rating rollup in SQL', async () => {
       { $match: { series: 's1', isRemoved: false } },
       { $group: { _id: '$series', avg: { $avg: '$rating' }, count: { $sum: 1 } } },
     ]);
-    const stmt = pool.log[0];
+    const stmt = statementsOf(pool, 'SELECT').at(-1);
     assert.match(stmt.sql, /AVG\("rating"\).*::float8 AS "avg"/);
     assert.match(stmt.sql, /GROUP BY "series"/);
     assert.match(stmt.sql, /WHERE \("series" = \$1 AND "is_removed" = \$2\)/);
@@ -308,7 +320,7 @@ test('aggregate() supports sort, skip, limit and $project', async () => {
       { $skip: 1 },
       { $limit: 5 },
     ]);
-    const stmt = pool.log[0];
+    const stmt = statementsOf(pool, 'SELECT').at(-1);
     const sql = stmt.sql;
     assert.match(sql, /MAX\("rating"\)/, '$max accumulator');
     assert.match(sql, /ORDER BY "count" DESC/);
@@ -365,7 +377,7 @@ test('nextChapterNumber delegates the increment to the database', async () => {
     };
     const num = await Series.nextChapterNumber('s1');
     assert.equal(num, 7);
-    assert.match(pool.log[0].sql, /SET "chapter_count" = "chapter_count" \+ 1/);
-    assert.match(pool.log[0].sql, /RETURNING "chapter_count"/);
+    assert.match(statementsOf(pool, 'UPDATE')[0].sql, /SET "chapter_count" = "chapter_count" \+ 1/);
+    assert.match(statementsOf(pool, 'UPDATE')[0].sql, /RETURNING "chapter_count"/);
   });
 });

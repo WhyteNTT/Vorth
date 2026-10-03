@@ -8,6 +8,11 @@
  * reset silently does nothing. Each case below is a real way to ship that.
  */
 
+process.env.DATABASE_URL ||= 'postgres://stub/stub';
+process.env.DATABASE_SSL = 'false';
+process.env.JWT_SECRET ||= 'test-secret';
+process.env.NODE_ENV = 'test';
+
 const test = require('node:test');
 const assert = require('node:assert');
 

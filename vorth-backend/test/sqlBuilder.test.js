@@ -155,3 +155,75 @@ test('SQL builder: camel/snake round trip', () => {
   assert.equal(sql.camel('display_name'), 'displayName');
   assert.equal(sql.snake('views.daily'), 'views.daily');
 });
+
+/**
+ * A condition that references a parameter it does not bind, or binds one it
+ * never references, is rejected by PostgreSQL at execution time with
+ * "bind message supplies N parameters, but prepared statement requires M".
+ *
+ * This happened for real: a column-existence check was asked about the model
+ * object rather than the table's column list, reported every column missing,
+ * emitted WHERE FALSE, and still bound the search term. The unit test missed it
+ * because its fixture carried a `columns` property that real models do not
+ * have. Asserting the invariant over every operator closes the class, not just
+ * that one query.
+ */
+test('no compiled condition references a parameter it does not bind', () => {
+  const model = { table: 'series', isJson: () => false };
+  const columns = new Set([
+    'id', 'title', 'author', 'synopsis', 'search_vector', 'views', 'genres',
+  ]);
+
+  const filters = [
+    {},
+    { title: 'x' },
+    { title: { $ne: 'x' } },
+    { views: { $gte: 1 } },
+    { views: { $gte: 1, $lt: 9 } },
+    { id: { $in: ['a', 'b', 'c'] } },
+    { id: { $nin: ['a'] } },
+    { title: { $regex: '^a', $options: 'i' } },
+    { title: { $exists: true } },
+    { $or: [{ title: 'a' }, { author: 'b' }] },
+    { $and: [{ title: 'a' }, { author: 'b' }] },
+    { $not: { title: 'a' } },
+    { $text: { $search: 'harbour lights' } },
+    { $text: { $search: '' } },
+    { $substring: 'harbour' },
+    { author: 'a', $text: { $search: 'b' } },
+    { $or: [{ $text: { $search: 'a' } }, { $substring: 'b' }] },
+    { $not: { $text: { $search: 'a' } } },
+  ];
+
+  for (const filter of filters) {
+    // Against a full column list, and against a table that has none of them, so
+    // both the indexed and the degraded branches are covered.
+    for (const cols of [columns, new Set(['id'])]) {
+      const params = new sql.Params();
+      const { text } = sql.buildWhere(filter, model, params, cols);
+      const referenced = Math.max(0,
+        ...(text.match(/\$\d+/g) || ['0']).map((n) => Number(n.slice(1))));
+      assert.ok(referenced <= params.values.length,
+        `${JSON.stringify(filter)} against ${cols.size} columns compiled to "${text}" `
+        + `referencing $${referenced} but binding ${params.values.length}`);
+    }
+  }
+});
+
+test('buildInsert never mentions a column twice', () => {
+  const params = new sql.Params();
+  const text = sql.buildInsert('series', {
+    title: 't', author: 'a', genres: ['Fantasy'], views: { daily: 1 },
+  }, model(['genres', 'views']), params);
+
+  const named = [...text.matchAll(/"([a-z_]+)"\s*(?=[,)])/g)].map((m) => m[1]);
+  const seen = new Set();
+  for (const col of named) {
+    assert.ok(!seen.has(col), `"${col}" appears twice in: ${text}`);
+    seen.add(col);
+  }
+  assert.deepEqual([...seen].sort(), ['author', 'genres', 'title', 'views']);
+  // Four columns, four placeholders, four values.
+  assert.equal((text.match(/\$\d+/g) || []).length, 4);
+  assert.equal(params.values.length, 4);
+});

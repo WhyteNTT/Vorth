@@ -54,6 +54,55 @@ if (!chromium) reasons.push('playwright is not installed (npm i -D playwright &&
 if (!process.env.VORTH_E2E) reasons.push('VORTH_E2E is not set');
 
 const skip = reasons.length ? reasons.join('; ') : false;
+let browserPromise = null;
+
+/**
+ * Launches Chromium once for the whole file.
+ *
+ * A launch failure is reported as a skip, not a failure: a checkout with the
+ * package but no downloaded browser has not failed anything.
+ */
+async function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = chromium.launch().catch((err) => {
+      browserPromise = null;
+      const why = String(err && err.message ? err.message : err).split('\n')[0];
+      throw new Error(`no usable Chromium: ${why} (run: npx playwright install chromium)`);
+    });
+  }
+  return browserPromise;
+}
+
+/**
+ * Awaits a teardown step without letting it wedge the run.
+ *
+ * Playwright occasionally leaves close() pending when a page is mid-navigation.
+ * A teardown that can hang is worse than a teardown that gives up, because the
+ * assertions have already passed and the run just stops reporting.
+ */
+async function closeQuietly(fn, ms = 5000) {
+  try {
+    await Promise.race([
+      Promise.resolve(fn()).catch(() => {}),
+      new Promise((resolve) => { setTimeout(resolve, ms).unref(); }),
+    ]);
+  } catch (_) { /* nothing useful to do about a failed close */ }
+}
+
+test.after(async () => {
+  if (browserPromise) {
+    const b = await browserPromise.catch(() => null);
+    if (b) {
+      // Bounded: a page mid-navigation can keep close() pending indefinitely, and
+      // the suite must not hang after its assertions have all passed.
+      await Promise.race([
+        b.close().catch(() => {}),
+        new Promise((resolve) => { setTimeout(resolve, 5000).unref(); }),
+      ]);
+    }
+  }
+
+});
 
 if (!skip) {
   // Refuse to drive a browser against anything that is not a disposable
@@ -108,6 +157,40 @@ async function startServer() {
   child.stdout.on('data', (d) => { output += d; });
   child.stderr.on('data', (d) => { output += d; });
 
+  /*
+   * Nothing here should keep the test process alive once the tests are done.
+   * The child's pipes are inherited handles: without unref and an explicit
+   * destroy they keep the event loop alive indefinitely, and the run hangs after
+   * the last assertion instead of exiting.
+   */
+  child.unref();
+
+  /**
+   * Stops the server and releases its pipes.
+   *
+   * kill() only signals; the process has not exited when it returns, and the
+   * stdout/stderr pipes stay registered as active handles until it does. Six
+   * leftover PipeWraps kept this suite's event loop alive after every assertion
+   * had passed, so the run hung instead of exiting. Waiting for 'exit' first is
+   * what actually releases them.
+   */
+  const shutdown = async () => {
+    if (child.exitCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill();
+      await Promise.race([
+        exited,
+        new Promise((resolve) => { setTimeout(resolve, 5000).unref(); }),
+      ]);
+    }
+    for (const stream of [child.stdout, child.stderr]) {
+      if (stream) {
+        stream.removeAllListeners('data');
+        if (!stream.destroyed) stream.destroy();
+      }
+    }
+  };
+
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
@@ -118,13 +201,15 @@ async function startServer() {
       if (res.ok) {
         const body = await res.json();
         if (body.database === 'connected' || body.db === 'connected' || body.ok) {
-          return { child, port, base: `http://127.0.0.1:${port}`, log: () => output };
+          return {
+            child, port, base: `http://127.0.0.1:${port}`, log: () => output, shutdown,
+          };
         }
       }
     } catch (_) { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 250));
   }
-  child.kill();
+  await shutdown();
   throw new Error(`server.js never became healthy:\n${output}`);
 }
 
@@ -184,7 +269,7 @@ const uniq = () => Math.random().toString(36).slice(2, 8);
 
 test('end to end: sign up, publish, read, save', { skip }, async () => {
   const server = await startServer();
-  const browser = await chromium.launch();
+  const browser = await getBrowser();
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   const watch = watchPage(page);
@@ -358,15 +443,16 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
     await page.waitForSelector('#profileLoggedOut:not(.hidden)', { timeout: 15000 });
     assertClean(watch, 'sign out');
   } finally {
-    await context.close();
-    await browser.close();
-    server.child.kill();
+    // Server first: its pipes are the handles that keep the process alive, and
+    // this must happen even if closing the page below misbehaves.
+    await server.shutdown();
+    await closeQuietly(() => context.close());
   }
 });
 
 test('end to end: the public rankings endpoint serves without error', { skip }, async () => {
   const server = await startServer();
-  const browser = await chromium.launch();
+  const browser = await getBrowser();
   const page = await browser.newPage();
   const watch = watchPage(page);
   try {
@@ -381,14 +467,14 @@ test('end to end: the public rankings endpoint serves without error', { skip }, 
     assert.doesNotMatch(res.body, /error/i);
     assertClean(watch, 'rankings');
   } finally {
-    await browser.close();
-    server.child.kill();
+    await server.shutdown();
+    await closeQuietly(() => page.close());
   }
 });
 
 test('end to end: the account panel for reset and verification is present', { skip }, async () => {
   const server = await startServer();
-  const browser = await chromium.launch();
+  const browser = await getBrowser();
   const page = await browser.newPage();
   try {
     await page.goto(`${server.base}/`, { waitUntil: 'networkidle' });
@@ -398,7 +484,7 @@ test('end to end: the account panel for reset and verification is present', { sk
       assert.equal(await page.locator(`#${id}`).count(), 1, `#${id} is missing from the page`);
     }
   } finally {
-    await browser.close();
-    server.child.kill();
+    await server.shutdown();
+    await closeQuietly(() => page.close());
   }
 });
