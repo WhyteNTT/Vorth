@@ -460,6 +460,7 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
 
     const db = require('../src/config/db');
     const User = require('../src/models/User');
+    const Series = require('../src/models/Series');
     const Notification = require('../src/models/Notification');
     const DMCAReport = require('../src/models/DMCAReport');
     const dmcaController = require('../src/controllers/dmcaController');
@@ -522,7 +523,21 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
 
       /* --- and the panel ---------------------------------------------- */
       await page.click('button[data-view="profile"]');
-      await page.waitForSelector('#dmcaTakedownList .claim-item', { timeout: 15000 });
+      await page.waitForSelector('#profileLoggedIn:not(.hidden)', { timeout: 15000 });
+
+      /*
+       * Click Refresh rather than relying on the panel having refreshed itself.
+       *
+       * The panel does refresh when the view is shown, but that fetch races the
+       * claim being visible: the claim was created moments ago, so a request that
+       * went out beforehand legitimately returns without it. Waiting on that is
+       * waiting on a race - it passes locally because the round trip is slow
+       * enough and fails on a fast runner for the opposite reason. The button is
+       * the deterministic way to ask for current data, and it is the control a
+       * publisher has anyway.
+       */
+      await page.click('#dmcaRefreshBtn');
+      await page.waitForSelector('#dmcaTakedownList .claim-item', { timeout: 30000 });
 
       const rendered = await page.evaluate(() => {
         const host = document.getElementById('dmcaTakedownList');
@@ -577,11 +592,23 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
         { timeout: 5000 }
       );
     } finally {
-      // Notification first: it references the series, and nothing cascades.
-      await Notification.deleteMany({ message: { $ne: null } }).catch(() => {});
-      if (report) {
-        await DMCAReport.deleteMany({ id: report._id }).catch(() => {});
+      /*
+       * Teardown, in dependency order.
+       *
+       * The series is restored before the report is deleted, and both before the
+       * user. Accepting the takedown set is_removed and a takedown_reason on the
+       * series, and dmca_reports.infringing_series restricts, so a report left
+       * behind keeps its series undeletable - which is how 25 orphaned reports
+       * and 50 permanently-removed series accumulated here, and made db:wipe fail
+       * with a foreign-key violation for anyone running the suites in order.
+       */
+      if (seriesId) {
+        await Series.findByIdAndUpdate(seriesId, {
+          isRemoved: false, takedownReason: null,
+        }).catch(() => {});
       }
+      if (report) await DMCAReport.deleteMany({ id: report._id }).catch(() => {});
+      await Notification.deleteMany({ series: seriesId }).catch(() => {});
       await User.deleteMany({ id: admin.id }).catch(() => {});
       // This process opened its own pool for the admin work above; an open pool
       // keeps the event loop alive and the test run would hang.

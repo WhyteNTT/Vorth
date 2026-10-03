@@ -73,6 +73,8 @@ const state = {
   activeCounterNotice: null,
   /* Guards the profile view's own refresh against overlapping calls. */
   profileRefreshing: false,
+  /* Set when a navigation arrives mid-refresh, so one more fetch is run after. */
+  profileRefreshQueued: false,
   currentDetailId: null,
   currentReader: null,
   rankRange: 'daily',
@@ -117,7 +119,7 @@ function getToken(){ return state.token || localStorage.getItem(TOKEN_STORAGE_KE
  * original request, rather than bouncing the user to the sign-in form.
  */
 let refreshInFlight = null;
-function clearSession(){ storeToken(''); state.profile=null; state.libraryIds=[]; state.librarySeries=[]; state.ownedSeries=[]; state.downloadItems=[]; state.progressEntries=[]; state.progressMap={}; state.notifications=[]; state.unreadNotifications=0; /* Claims are the signed-in publisher's, and the form holds a takedown id from them, so signing out has to drop both. */ state.dmcaTakedowns=[]; state.activeCounterNotice=null; state.profileRefreshing=false; }
+function clearSession(){ storeToken(''); state.profile=null; state.libraryIds=[]; state.librarySeries=[]; state.ownedSeries=[]; state.downloadItems=[]; state.progressEntries=[]; state.progressMap={}; state.notifications=[]; state.unreadNotifications=0; /* Claims are the signed-in publisher's, and the form holds a takedown id from them, so signing out has to drop both. */ state.dmcaTakedowns=[]; state.activeCounterNotice=null; state.profileRefreshing=false; state.profileRefreshQueued=false; }
 function storeToken(token){ state.token = token || ''; if(token) localStorage.setItem(TOKEN_STORAGE_KEY, token); else localStorage.removeItem(TOKEN_STORAGE_KEY); }
 function refreshSession(){
   /* One in-flight refresh shared by all concurrent 401s: rotating twice would
@@ -405,13 +407,26 @@ function renderProfile(){
    * Guarded so the repeated showView('profile') calls that follow a hash change
    * cannot pile up a fresh batch of requests each time.
    */
-  if(!isSignedIn() || state.profileRefreshing) return;
+  /*
+   * Navigating away and back while a refresh is in flight queues another one
+   * rather than dropping it. Returning early instead leaves the panel showing
+   * whatever the in-flight request happened to return, which is stale exactly when
+   * it matters - the claim arrived while the request was already on the wire.
+   */
+  if(!isSignedIn()) return;
+  if(state.profileRefreshing){ state.profileRefreshQueued = true; return; }
+
   state.profileRefreshing = true;
   refreshUserData().then(() => {
     state.profileRefreshing = false;
     refreshAuthUI();
     renderDmcaTakedowns();
     updateNotifBadge();
+
+    if(state.profileRefreshQueued){
+      state.profileRefreshQueued = false;
+      renderProfile();
+    }
   }).catch(() => { state.profileRefreshing = false; });
 }
 function renderNotifs(){ const list=$('#notifList'); list.innerHTML = state.notifications.length ? state.notifications.map(n=>`<div class="notif-item ${n.isRead?'read':'unread'}" data-id="${n._id || n.id}"><span class="notif-dot"></span><div><span class="notif-text">${escapeHtml(n.message || '')}</span><span class="notif-time">${new Date(n.createdAt).toLocaleString()}</span></div></div>`).join('') : '<p class="empty-hint">No notifications yet.</p>'; $all('.notif-item', list).forEach(item=> item.addEventListener('click', async ()=>{ const id=item.dataset.id; try{ await apiFetch(`/notifications/${id}/read`, { method:'PATCH' }); await refreshUserData(); renderNotifs(); } catch(err){ toast(err.message || 'Could not mark notification as read.'); } })); updateNotifBadge(); }
