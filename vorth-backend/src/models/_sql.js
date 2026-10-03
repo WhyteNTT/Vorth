@@ -165,9 +165,30 @@ function buildCondition(filter, model, params, columns) {
             const shared = `(${col} ?| ${p}::text[])`;
             clauses.push(op === '$in' ? shared : `NOT ${shared}`);
           } else {
-            const p = params.add(list);
-            const any = `${col} = ANY (${p})`;
-            clauses.push(op === '$in' ? any : `NOT ${any}`);
+            /*
+             * A null in an $in/$nin list means "the field may be null", which is
+             * how MongoDB reads it. It cannot be left in the array:
+             * `col = ANY(ARRAY[NULL])` is UNKNOWN for every value of col, so
+             * `NOT (...)` is UNKNOWN too and the query matches nothing - the
+             * exact opposite of the request. Null is peeled off and expressed
+             * separately: OR-ed for $in (a null column matches), AND-ed for $nin
+             * (a null column does not).
+             */
+            const hasNull = list.some((v) => v === null || v === undefined);
+            const values = list.filter((v) => v !== null && v !== undefined);
+            const p = values.length ? params.add(values) : null;
+            const any = p ? `${col} = ANY (${p})` : null;
+            const parts = [];
+
+            if (op === '$in') {
+              if (any) parts.push(any);
+              if (hasNull) parts.push(`${col} IS NULL`);
+              clauses.push(parts.length === 1 ? parts[0] : `(${parts.join(' OR ')})`);
+            } else {
+              if (hasNull) parts.push(`${col} IS NOT NULL`);
+              if (any) parts.push(`NOT (${any})`);
+              clauses.push(parts.join(' AND ') || 'TRUE');
+            }
           }
           continue;
         }
@@ -182,6 +203,17 @@ function buildCondition(filter, model, params, columns) {
           const p = params.add(String(operand));
           const negate = COMPARATORS[op] === '<>';
           clauses.push(`${col} ? ${p}${negate ? ' = FALSE' : ''}`);
+        } else if (op === '$ne' && operand === null) {
+          /*
+           * { field: { $ne: null } } means "field has a value", which in Mongo
+           * excludes documents where the field is null or absent.
+           *
+           * It cannot be written as `<> $n`. In SQL, `x <> NULL` evaluates to
+           * UNKNOWN, not TRUE, so the predicate matches *no rows at all* - the
+           * opposite of what was asked. It has to become IS NOT NULL, and it
+           * binds no parameter, since there is no value to bind.
+           */
+          clauses.push(`${col} IS NOT NULL`);
         } else {
           clauses.push(`${col} ${COMPARATORS[op]} ${params.add(operand)}`);
         }

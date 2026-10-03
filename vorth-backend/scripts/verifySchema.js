@@ -26,7 +26,7 @@ const { pool } = require('../src/config/db');
 /** Every table the models map onto. */
 const TABLES = [
   'users', 'series', 'chapters', 'comments', 'notifications',
-  'reading_progress', 'dmca_reports', 'view_events',
+  'reading_progress', 'dmca_reports', 'dmca_counter_notices', 'view_events',
   'refresh_tokens', 'auth_tokens', 'rate_limit_buckets', 'content_reports',
 ];
 
@@ -46,6 +46,10 @@ const UNIQUE_CONSTRAINTS = [
   ['auth_tokens_token_hash_key', 'a token hash is stored once'],
   ['view_events_chapter_viewer_window_start_key', 'one view per reader per window'],
   ['reading_progress_user_series_key', 'one progress row per user+series'],
+  // Without this, a second counter-notice for the same takedown would start a
+  // second clock and let a subscriber hold content down indefinitely. The
+  // controller also checks, but only the database can settle a race.
+  ['idx_counter_notice_unique_report', 'one counter-notice per takedown'],
 ];
 
 /** Indexes that keep the hot read paths off a sequential scan. */
@@ -58,11 +62,17 @@ const REQUIRED_INDEXES = [
   'idx_authtok_user', 'idx_authtok_expiry',
   'idx_view_events_chap', 'idx_ratelimit_window', 'idx_users_library',
   'idx_dmca_status', 'idx_reports_status', 'idx_reports_series', 'idx_reports_chapter',
+  'idx_counter_notice_pending',
 ];
 
 /** Columns the code reads unconditionally. */
 const REQUIRED_COLUMNS = [
   ['users', 'email_verified_at'],
+  // Recording what a takedown removed is what makes restoration possible at
+  // all; is_removed on its own does not say why content is down.
+  ['dmca_reports', 'removal_series'],
+  ['dmca_reports', 'removal_chapter'],
+  ['dmca_reports', 'removal_at'],
 ];
 
 async function main() {

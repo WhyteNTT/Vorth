@@ -123,16 +123,38 @@ const resolve = [
         report.resolvedAt = new Date();
         report.resolvedBy = req.user.id;
       }
+
+      /*
+       * Record what the takedown removes, before the save below.
+       *
+       * is_removed on its own does not say *why* the content is down, so a
+       * counter-notice under 17 U.S.C. 512(g) would have nothing to restore.
+       * This has to happen above report.save(): setting it afterwards looked
+       * right and silently did nothing, leaving every accepted takedown
+       * unrestorable.
+       */
+      if (status === 'accepted' && (report.infringingChapter || report.infringingSeries)) {
+        report.removalChapter = report.infringingChapter ?? null;
+        report.removalSeries = report.infringingSeries ?? null;
+        report.removalAt = new Date();
+      }
+
       await report.save({ client });
 
       if (status === 'accepted') {
+        const reason = `DMCA takedown accepted (report ${report._id})`;
         if (report.infringingChapter) {
-          await Chapter.findByIdAndUpdate(report.infringingChapter, { isRemoved: true }, { client });
+          // The reason is recorded alongside the removal so a counter-notice
+          // can tell this chapter from one removed for some other reason since.
+          await Chapter.findByIdAndUpdate(report.infringingChapter, {
+            isRemoved: true,
+            takedownReason: reason,
+          }, { client });
         }
         if (report.infringingSeries) {
           await Series.findByIdAndUpdate(report.infringingSeries, {
             isRemoved: true,
-            takedownReason: `DMCA takedown accepted (report ${report._id})`,
+            takedownReason: reason,
           }, { client });
         }
       }

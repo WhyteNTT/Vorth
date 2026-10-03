@@ -49,31 +49,74 @@ missing information.
 - Your notice is logged and queued for review by our moderation team.
 - If we accept the notice, the identified series and/or chapter is
   removed from public view (soft-removed, not publicly visible, but
-  retained internally for record-keeping).
+  retained internally for record-keeping). We record what was removed
+  and why, so that any later counter-notice restores exactly that and
+  nothing else.
 - The publishing user is notified that their content was removed in
   response to a copyright claim.
-- [If you want to support formal DMCA counter-notices, add that
-  process here — the current backend does not implement a
-  counter-notice endpoint; you would need to add one, including the
-  10–14 business day statutory waiting period before restoring
-  content per DMCA §512(g).]
 
-## 4. Repeat infringers
+## 4. Counter-notices
+
+If your material was removed by mistake or misidentification, the
+publishing user may file a counter-notice. Under DMCA §512(g) a
+counter-notice must be a physical or electronic document signed by the
+subscriber, and must state, under penalty of perjury:
+
+1. the subscriber's name, address and email, so that process can be
+   served on them;
+2. the material that was removed or disabled, and the location where it
+   was previously available;
+3. that the subscriber has a good faith belief the material was removed
+   as a result of mistake or misidentification; and
+4. that the subscriber consents to the jurisdiction of the Federal
+   District Court for the judicial district in which they reside or in
+   which the alleged infringing activity was located, and will accept
+   service of process from you.
+
+A counter-notice is filed by the publishing user, without needing a
+Vorth account, and is only available where an accepted notice actually
+removed something. It can be filed once per takedown.
+
+When you file a counter-notice we:
+
+- forward it to you, with the subscriber's statements in full, as
+  §512(g)(2)(A) requires; and
+- start a **response window of 10 business days** from that forward.
+
+If, within that window, you notify us that you have filed a court action
+seeking to restrain the activity, we will keep the material removed. If
+you do not, we may restore it. Restoration is not automatic and not
+immediate: it happens through a reviewed sweep, and only for content
+that is still removed because of *that* notice. If the content has since
+been removed for another reason — a moderator decision, a Content Policy
+report, or a court order — it stays down, and the sweep reports that it
+declined to restore it and why.
+
+The window is measured in business days, excluding weekends. Public
+holidays are not excluded by default; a deployment can configure them
+with `DMCA_COUNTER_NOTICE_HOLIDAYS`. The window defaults to 10 business
+days, the earliest bound the statute allows, so the clock only ever runs
+in your favour; it can be set up to 14 with `DMCA_COUNTER_NOTICE_DAYS`.
+
+## 5. Repeat infringers
 
 Consistent with the DMCA, Vorth will terminate, in appropriate
 circumstances, the accounts of users who are determined to be repeat
 infringers.
 
-## 5. Misrepresentation
+## 6. Misrepresentation
 
 Under the DMCA, any person who knowingly materially misrepresents
 that material is infringing, or was removed by mistake, may be liable
 for damages.
 
-## 6. Contact
+## 7. Contact
 
 Send takedown notices to: [DMCA_CONTACT_EMAIL] or via
 `POST /api/dmca`.
+
+Counter-notices are filed by the publishing user via
+`POST /api/dmca/:id/counter-notice`, and are forwarded to you by email.
 
 Designated agent (once registered with the U.S. Copyright Office):
 [NAME / ADDRESS / EMAIL — fill in after registration]

@@ -35,12 +35,32 @@ module.exports = {
   rateLimitWindowMinutes: parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 10) || 15,
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 300,
   authRateLimitMaxRequests: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS, 10) || 20,
+  // DMCA intake is public and sends email to a third party, so it gets its own
+  // far tighter budget rather than riding on the general limit.
+  dmcaRateLimitMaxRequests: parseInt(process.env.DMCA_RATE_LIMIT_MAX_REQUESTS, 10) || 5,
   // 'postgres' shares counters across instances and survives a deploy.
   // 'memory' is the zero-dependency default for a single process.
   rateLimitStore: process.env.RATE_LIMIT_STORE === 'postgres' ? 'postgres' : 'memory',
   minimumUserAge: parseInt(process.env.MINIMUM_USER_AGE, 10) || 13,
   dmcaContactEmail: process.env.DMCA_CONTACT_EMAIL || 'dmca@example.com',
   supportContactEmail: process.env.SUPPORT_CONTACT_EMAIL || 'support@example.com',
+
+  // ---- DMCA counter-notice (17 U.S.C. 512(g)) ----
+  // The statute gives the original complainant 10 to 14 business days to say
+  // whether it filed a court action. The default is the earliest bound, so the
+  // clock only ever runs in the complainant's favour; 14 is the outer limit and
+  // is clamped rather than rejected, because a longer window is legally
+  // permitted and a misconfigured value should not stop the server booting.
+  dmcaCounterNoticeDays: Math.min(
+    14,
+    Math.max(10, parseInt(process.env.DMCA_COUNTER_NOTICE_DAYS, 10) || 10)
+  ),
+  // Public holidays are NOT excluded by default - see businessDays.js for why.
+  // A deployment that wants them passes ISO YYYY-MM-DD dates here.
+  dmcaCounterNoticeHolidays: (process.env.DMCA_COUNTER_NOTICE_HOLIDAYS || '')
+    .split(',')
+    .map((d) => d.trim())
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
 
   // ---- sessions ----
   refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS, 10) || 30,

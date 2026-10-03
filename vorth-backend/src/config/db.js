@@ -102,8 +102,15 @@ async function connectDB() {
     CREATE TABLE IF NOT EXISTS chapters (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), series uuid NOT NULL REFERENCES series(id), num integer NOT NULL,
       title text NOT NULL, paragraphs jsonb, pages jsonb, views integer NOT NULL DEFAULT 0, is_removed boolean NOT NULL DEFAULT false,
+      -- Same role as series.takedown_reason: is_removed says *that* content is
+      -- down, this says *why*. Without it a DMCA counter-notice cannot tell a
+      -- chapter it removed from one an admin or a court order removed since, and
+      -- restoring the first would un-hide the second.
+      takedown_reason text,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(series,num)
     );
+    -- Additive: the column above is new, so an existing table still needs it.
+    ALTER TABLE chapters ADD COLUMN IF NOT EXISTS takedown_reason text;
     CREATE TABLE IF NOT EXISTS comments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), series uuid NOT NULL REFERENCES series(id), "user" uuid NOT NULL REFERENCES users(id),
       rating integer NOT NULL, text text NOT NULL, parent uuid REFERENCES comments(id), is_removed boolean NOT NULL DEFAULT false,
@@ -179,6 +186,73 @@ async function connectDB() {
     ) STORED;
 
   CREATE INDEX IF NOT EXISTS idx_series_search ON series USING GIN (search_vector);
+
+  -- Records that a takedown actually removed something, so a counter-notice
+  -- knows what to restore. Set when a takedown is accepted.
+  ALTER TABLE dmca_reports
+    ADD COLUMN IF NOT EXISTS removal_series uuid REFERENCES series(id);
+  ALTER TABLE dmca_reports
+    ADD COLUMN IF NOT EXISTS removal_chapter uuid REFERENCES chapters(id);
+  ALTER TABLE dmca_reports
+    ADD COLUMN IF NOT EXISTS removal_at timestamptz;
+
+  /*
+   * A counter-notice is the alleged infringer's reply to an accepted takedown.
+   *
+   * The three booleans are the statutory statements in 512(g)(3)(A)-(C), each
+   * of which is made under penalty of perjury. They are stored as affirmations
+   * rather than free text so a record cannot exist without them.
+   *
+   * status:
+   *   pending   filed; the complainant has until response_deadline to say
+   *             whether they filed a court action
+   *   contested the complainant notified us that court proceedings began;
+   *             content stays down
+   *   restored  the window lapsed with no court action, so 512(g)(2)(C) permits
+   *             the material to be put back
+   *   withdrawn the subscriber retracted it
+   */
+  CREATE TABLE IF NOT EXISTS dmca_counter_notices (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    dmca_report uuid NOT NULL REFERENCES dmca_reports(id),
+    subscriber_name text NOT NULL,
+    subscriber_email text NOT NULL,
+    subscriber_address text NOT NULL,
+    identified_material text NOT NULL,
+    material_location text NOT NULL,
+    good_faith_statement boolean NOT NULL,
+    perjury_statement boolean NOT NULL,
+    jurisdiction_statement boolean NOT NULL,
+    signature text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    -- Nullable on purpose. 512(g)(2)(A) requires the counter-notice to be
+    -- forwarded to the complainant, and only the day it is forwarded starts
+    -- their 10-to-14 business day clock. If the forward fails there is no
+    -- deadline yet, so this stays null until it succeeds and the notice can be
+    -- re-forwarded rather than being treated as already running.
+    response_deadline timestamptz,
+    forwarded_at timestamptz,
+    forwarded_note text,
+    resolved_at timestamptz,
+    resolved_by uuid REFERENCES users(id),
+    admin_notes text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+
+  -- The column was first created NOT NULL, on the reading that a counter-notice
+  -- always has a deadline. It does not: the clock starts when the notice is
+  -- forwarded to the complainant, and that can fail. Relax it so a failed
+  -- forward is recorded as "not yet forwarded" instead of being unrecordable.
+  ALTER TABLE dmca_counter_notices ALTER COLUMN response_deadline DROP NOT NULL;
+
+  -- One counter-notice per takedown: a second would restart the clock and let a
+  -- subscriber extend the deadline indefinitely.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_counter_notice_unique_report
+    ON dmca_counter_notices (dmca_report);
+  -- The restoration sweep looks for lapsed windows.
+  CREATE INDEX IF NOT EXISTS idx_counter_notice_pending
+    ON dmca_counter_notices (status, response_deadline);
 
   CREATE TABLE IF NOT EXISTS view_events (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

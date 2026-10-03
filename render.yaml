@@ -114,6 +114,11 @@ services:
         sync: false
       - key: SUPPORT_CONTACT_EMAIL
         sync: false
+      # DMCA counter-notice response window, in business days. 10 to 14; values
+      # outside that are clamped. Defaults to 10, the earliest the statute
+      # allows, so the clock only runs in the complainant's favour.
+      - key: DMCA_COUNTER_NOTICE_DAYS
+        value: '10'
 
       # Mail. Unset is treated as an error in production, which is the point:
       # the alternative is shipping password reset that cannot work.

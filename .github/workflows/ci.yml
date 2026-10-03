@@ -149,6 +149,18 @@ jobs:
           VORTH_LIVE_DB: '1'
         run: npm run test:live
 
+      # The sweep is operator-run rather than scheduled, which means nothing else
+      # would ever execute it. Without this step a typo in the script would only
+      # surface at the moment an operator most needs it to work.
+      - name: The counter-notice restoration sweep runs and reports
+        env:
+          VORTH_LIVE_DB: '1'
+        run: |
+          npm run dmca:sweep-lapsed -- --dry-run
+          # Nothing should be due yet, and the dry run must not change anything.
+          psql -h 127.0.0.1 -U vorth -d vorth_test -tAc \
+            "SELECT count(*) FROM dmca_counter_notices WHERE status <> 'pending';" | grep -qx 0
+
       # The browser suite already needs Chromium, so the end-to-end job reuses
       # that install rather than paying for it twice.
       - name: End to end (real server, real browser)

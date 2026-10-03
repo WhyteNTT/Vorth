@@ -54,4 +54,30 @@ const loginAttemptLimiter = limiterFor({
   message: { success: false, message: 'Too many failed sign-in attempts for this account.' },
 });
 
-module.exports = { generalLimiter, authLimiter, loginAttemptLimiter };
+/**
+ * DMCA intake.
+ *
+ * Both the takedown notice and the counter-notice are unauthenticated and
+ * unauthenticated endpoints that send email to a third party, which makes them
+ * a cheap way to get this deployment to send mail to arbitrary addresses. The
+ * general limit is far too loose for that.
+ *
+ * Keyed by IP *and* the target report id, so one client cannot spray a
+ * thousand different reports, and one report cannot be spammed from many hosts.
+ */
+const dmcaLimiter = limiterFor({
+  windowMs: env.rateLimitWindowMinutes * 60 * 1000,
+  max: env.dmcaRateLimitMaxRequests,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const target = (req.params && req.params.id) || 'new';
+    return `dmca|${req.ip}|${String(target).toLowerCase()}`;
+  },
+  message: {
+    success: false,
+    message: 'Too many DMCA submissions. Please wait before trying again.',
+  },
+});
+
+module.exports = { generalLimiter, authLimiter, loginAttemptLimiter, dmcaLimiter };

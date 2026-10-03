@@ -157,7 +157,12 @@ const resolve = [
 
       if (status === 'actioned') {
         if (actsOn !== 'none' && actsOn !== 'series' && report.reportedChapter) {
-          await Chapter.findByIdAndUpdate(report.reportedChapter, { isRemoved: true }, { client });
+          await Chapter.findByIdAndUpdate(report.reportedChapter, {
+            isRemoved: true,
+            // A reason, so a DMCA counter-notice restoring a *different*
+            // removal cannot un-hide a Content Policy removal by accident.
+            takedownReason: `Content Policy report upheld (report ${report._id})`,
+          }, { client });
         }
         if (actsOn !== 'none' && actsOn !== 'chapter' && report.reportedSeries) {
           await Series.findByIdAndUpdate(report.reportedSeries, {

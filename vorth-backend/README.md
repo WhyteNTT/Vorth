@@ -40,6 +40,18 @@ npm run db:inspect             # print row counts (read-only)
 without `FORCE=1`. Every demo account shares the password `vorthdemo123`, so
 change or delete them before opening the site publicly.
 
+```bash
+npm run dmca:sweep-lapsed -- --dry-run   # what a restoration sweep would do
+npm run dmca:sweep-lapsed                # restore content whose window lapsed
+```
+
+The sweep runs `connectDB()`, so it refuses a managed production database
+unless `VORTH_ALLOW_SCHEMA_ON_PRODUCTION=1`. It is not scheduled on purpose:
+§512(g)(2)(C) makes restoration permissive, and a job that fires unattended
+could re-expose content a court order is keeping down. Always dry-run first —
+it reports, per notice, both what it would put back and what it would leave
+down and why.
+
 ### Deploying
 
 [`../render.yaml`](../render.yaml) is a Render blueprint for a single web
@@ -401,9 +413,23 @@ the CI job reports an error, because a check that cannot fail proves nothing.
 
 - **No payment/monetization** — out of scope for this pass.
   Content Policy violations — only DMCA has a formal intake right now.
-- **No DMCA counter-notice flow** — accepted takedowns are final in
-  the current implementation; a real platform typically needs to
-  support counter-notices with the statutory waiting period.
+- **DMCA counter-notices are implemented but not legally reviewed.** The flow is
+  real: `POST /api/dmca/:id/counter-notice` captures the four §512(g)(3)
+  statements, forwards the counter-notice to the complainant as §512(g)(2)(A)
+  requires, starts a 10-business-day window from that forward, and restores
+  content once the window lapses without a court action
+  (`npm run dmca:sweep-lapsed`). Restoration is deliberately *not* automatic —
+  it is an operator-run sweep — and it only puts back content still removed
+  because of that same notice, so a moderator removal, a Content Policy report
+  or a court order is never undone. Before relying on any of it in production,
+  have counsel review the process and register a DMCA designated agent with the
+  U.S. Copyright Office. Public holidays are excluded from the window only if
+  `DMCA_COUNTER_NOTICE_HOLIDAYS` is configured; weekends always are.
+- **A removal recorded before `takedown_reason` existed cannot be restored
+  automatically.** The guard that decides what a counter-notice may put back
+  reads that column. Rows removed by a takedown accepted before this column was
+  added have a null reason, so they are treated as "not ours" and stay down. That
+  is the safe direction, but those need a deliberate backfill by an operator.
 - **Search** is an indexed tsvector over title, author, artist and synopsis,
   with stemming, weighted relevance ranking and a GIN index. A substring
   second pass runs when the indexed pass finds nothing, so partial words
@@ -412,11 +438,14 @@ the CI job reports an error, because a check that cannot fail proves nothing.
   a deliberate simplification rather than an oversight.
 - **Rate limiting** works, but the default `memory` store is per-process. Set
   `RATE_LIMIT_STORE=postgres` when running more than one instance.
-- **`aggregate()`** supports `$match`, `$group` (`$sum`/`$avg`/`$min`/`$max`/
-  `{$sum: 1}`), `$sort`, `$skip`, `$limit` and `$project`, grouped by `series`.
-  Anything else throws rather than returning quietly wrong numbers.
+- **`aggregate()`** supports `$match`, `$group`, `$sort`, `$skip`, `$limit` and
+  `$project`. `$group._id` may be any column (`'$type'`), a compound key
+  (`{ series: '$series', user: '$user' }`, reassembled into a nested `_id` in
+  JavaScript since it has no single SQL expression), or `null` for one row over
+  the whole match. Accumulators are `$sum`, `$avg`, `$min`, `$max` and
+  `{$sum: 1}`. Anything else throws rather than returning quietly wrong numbers.
 - **The schema check is a floor, not a ceiling.** `db:verify-schema` asserts
-  11 tables, 1 column, 8 UNIQUE constraints and 21 indexes. It cannot tell you
+  13 tables, 4 columns, 9 UNIQUE constraints and 25 indexes. It cannot tell you
   about a column type or a constraint it does not know about.
 - **Uploads default to local disk.** Set `STORAGE_DRIVER=s3` before running
   more than one instance, or files will not survive a redeploy.
