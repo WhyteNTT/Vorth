@@ -291,9 +291,17 @@ test('aggregate() computes the rating rollup in SQL', async () => {
 
 test('aggregate() rejects a pipeline it cannot honour', async () => {
   await run({ rows: {} }, async () => {
+    // Grouping by an arbitrary field used to throw. It is now supported, so what
+    // must still be refused is a key shape that cannot be expressed: a bare
+    // string with no field reference, and a compound document whose values are
+    // not field references.
     await assert.rejects(
-      () => Comment.aggregate([{ $group: { _id: '$author' } }]),
-      /only supports grouping by "series"/
+      () => Comment.aggregate([{ $group: { _id: 'author' } }]),
+      /must be a field reference/
+    );
+    await assert.rejects(
+      () => Comment.aggregate([{ $group: { _id: { author: 'author' } } }]),
+      /must be a field reference/
     );
     await assert.rejects(
       () => Comment.aggregate([{ $unwind: '$text' }]),

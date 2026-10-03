@@ -446,7 +446,7 @@ class BaseModel {
    * unimplemented pipeline stage that quietly returns wrong numbers is worse
    * than a loud failure.
    */
-  static async aggregate(pipeline, options) {
+ static async aggregate(pipeline, options) {
     const exec = (options && options.client) || db.pool;
     const stages = Array.isArray(pipeline) ? pipeline : [];
     if (!stages.length) return [];
@@ -479,94 +479,153 @@ class BaseModel {
     const limitStage = stages.find((s) => '$limit' in s);
     const projectStage = stages.find((s) => '$project' in s);
 
+    /*
+     * Shape is a pure function of the pipeline and the model, so the whole
+     * pipeline is validated before any I/O. Otherwise a typo in a group key cost
+     * a database round trip before failing.
+     */
+    const groupSpec = (groupStage && groupStage.$group) || {};
+    const key = resolveGroupKey(groupSpec._id, this);
+
+    const ACCUMULATORS = {
+      $sum: (path) => `COALESCE(SUM(${sql.columnExpr(path, this)}), 0)`,
+      $avg: (path) => `COALESCE(AVG(${sql.columnExpr(path, this)}), 0)::float8`,
+      $min: (path) => `MIN(${sql.columnExpr(path, this)})`,
+      $max: (path) => `MAX(${sql.columnExpr(path, this)})`,
+    };
+
+    const accumulatorNames = Object.keys(groupSpec).filter((n) => n !== '_id');
+
+    for (const name of accumulatorNames) {
+      const op = groupSpec[name];
+      if (op === 1 || (isPlainObject(op) && op.$sum === 1)) continue;
+      const found = Object.keys(op || {}).find((k) => ACCUMULATORS[k]);
+      if (!found) {
+        throw new Error(`aggregate(): unsupported accumulator for "${name}". `
+          + 'Supported: $sum, $avg, $min, $max, {$sum: 1}');
+      }
+      if (typeof op[found] !== 'string' || !op[found].startsWith('$')) {
+        throw new Error(`aggregate(): "${found}" for "${name}" must reference a field, `
+          + `e.g. { ${found} : '$rating' }`);
+      }
+    }
+
+    if (!key.columns.length && !accumulatorNames.length) {
+      // An ungrouped pipeline with nothing to accumulate would compile to an
+      // empty SELECT.
+      throw new Error('aggregate(): without $group._id, declare at least one accumulator');
+    }
+
+    if (sortStage) {
+      // Validate the sort against what the pipeline will actually output.
+      const sortable = new Set(accumulatorNames);
+      if (key.compound) key.fields.forEach((f) => sortable.add(f));
+      else if (key.columns.length) sortable.add('_id');
+      for (const field of Object.keys(sortStage.$sort || {})) {
+        if (!sortable.has(field)) {
+          throw new Error(`aggregate(): cannot sort by "${field}"; it is not in the $group output`);
+        }
+      }
+    }
+
     const params = new sql.Params();
     const where = sql.buildWhere(
       (matchStage && matchStage.$match) || {}, this, params,
       await tableColumns(this.table, exec)
     );
 
-    // ---- no grouping: a single row over the whole matching set
-    if (!groupStage) {
-      if (this.table !== 'comments') {
-        throw new Error('aggregate() without $group is only implemented for "comments"');
+    const selects = [];
+    let query;
+
+    if (key.columns.length) {
+      if (key.compound) {
+        // A compound key has no single SQL expression, so select each part and
+        // reassemble the object after the query.
+        key.columns.forEach((col, i) => {
+          selects.push(`${col} AS ${sql.ident(key.fields[i])}`);
+        });
+      } else {
+        selects.push(`${key.columns[0]} AS "_id"`);
       }
-      const { rows } = await exec.query(
-        `SELECT COALESCE(AVG("rating"), 0)::float8 AS avg, COUNT(*)::int AS count
-           FROM ${ident(this.table)}${where.text}`,
-        params.values
-      );
-      return [{ ...rows[0], _id: (matchStage && matchStage.$match && matchStage.$match.series) || null }];
+      accumulatorNames.forEach((n) => selects.push(accumulatorSelect(n, groupSpec[n], ACCUMULATORS)));
+      query = `SELECT ${selects.join(', ')} FROM ${ident(this.table)}${where.text}`
+        + ` GROUP BY ${key.columns.join(', ')}`;
+    } else {
+      /*
+       * No grouping: one row over everything that matched.
+       *
+       * This used to work only on comments and hardcoded a rating rollup, so any
+       * other table threw "aggregate() without $group is only implemented for
+       * comments". It now applies whatever accumulators the pipeline declares, on
+       * any table, which is what MongoDB does for {$group: {_id: null}}.
+       *
+       * It shares the tail below rather than returning, so $sort, $skip, $limit
+       * and $project behave the same either way. Returning early here dropped
+       * them, which is the sort of thing nobody notices until it matters.
+       */
+      accumulatorNames.forEach((n) => selects.push(accumulatorSelect(n, groupSpec[n], ACCUMULATORS)));
+      query = `SELECT ${selects.join(', ')} FROM ${ident(this.table)}${where.text}`;
     }
 
-    // ---- grouping
-    const spec = groupStage.$group || {};
-    const groupKey = spec._id && spec._id.startsWith('$') ? spec._id.slice(1) : 'series';
-    if (groupKey !== 'series') {
-      throw new Error(`aggregate() only supports grouping by "series" (got "${groupKey}")`);
+    if (sortStage && key.columns.length) {
+      /*
+       * Sort by the underlying column, not by the output alias.
+       *
+       * "_id" is not a column in any table, so ORDER BY "_id" was a guaranteed
+       * SQL error: the previous allowed-sort list included "_id" and then handed
+       * it to the database verbatim. A compound key exposes its parts under
+       * their own names, so sorting by a part works too.
+       */
+      const column = { _id: key.compound ? undefined : key.fields[0] };
+      const order = {};
+      for (const [field, dir] of Object.entries(sortStage.$sort || {})) {
+        order[field === '_id' ? column._id : field] = dir;
+      }
+      query += sql.buildOrderBy(order, this, params);
     }
 
-    // Accumulator name -> SQL expression.
-    const ACCUMULATORS = {
-      '$sum': (path) => `COALESCE(SUM(${sql.columnExpr(path, this)}), 0)`,
-      '$avg': (path) => `COALESCE(AVG(${sql.columnExpr(path, this)}), 0)::float8`,
-      '$min': (path) => `MIN(${sql.columnExpr(path, this)})`,
-      '$max': (path) => `MAX(${sql.columnExpr(path, this)})`,
-    };
-
-    const selects = ['"series" AS "_id"'];
-    for (const [name, op] of Object.entries(spec)) {
-      if (name === '_id') continue;
-      if (op === 1 || (isPlainObject(op) && op.$sum === 1)) {
-        selects.push(`COUNT(*)::int AS ${sql.ident(name)}`);
-        continue;
-      }
-      const found = Object.keys(op || {}).find((k) => ACCUMULATORS[k]);
-      if (!found) {
-        throw new Error(`aggregate(): unsupported accumulator for "${name}". `
-          + `Supported: $sum, $avg, $min, $max, {$sum: 1}`);
-      }
-      const path = op[found];
-      if (typeof path !== 'string' || !path.startsWith('$')) {
-        throw new Error(`aggregate(): "${found}" for "${name}" must reference a field, e.g. { $${found} : '$rating' }`);
-      }
-      selects.push(`${ACCUMULATORS[found](path.slice(1))} AS ${sql.ident(name)}`);
-    }
-
-    let query = `SELECT ${selects.join(', ')} FROM ${ident(this.table)}${where.text} GROUP BY "series"`;
-
-    if (sortStage) {
-      const allowed = new Set(['_id', 'series', ...Object.keys(spec).filter((k) => k !== '_id')]);
-      for (const field of Object.keys(sortStage.$sort || {})) {
-        if (!allowed.has(field)) {
-          throw new Error(`aggregate(): cannot sort by "${field}"; it is not in the $group output`);
-        }
-      }
-      query += sql.buildOrderBy(sortStage.$sort, this, params);
-    }
-    query += sql.buildPaging({ skip: skipStage ? skipStage.$skip : undefined, limit: limitStage ? limitStage.$limit : undefined }, params);
+    query += sql.buildPaging({
+      skip: skipStage ? skipStage.$skip : undefined,
+      limit: limitStage ? limitStage.$limit : undefined,
+    }, params);
 
     const { rows } = await exec.query(query, params.values);
 
+    // A compound key comes back as its parts; put it back together.
+    const results = key.compound
+      ? rows.map((row) => {
+        const parts = {};
+        const rest = Object.assign({}, row);
+        key.fields.forEach((f) => {
+          parts[f] = row[f];
+          delete rest[f];
+        });
+        return Object.assign({ _id: parts }, rest);
+      })
+      : rows.map((row) => (key.columns.length ? row : Object.assign({ _id: null }, row)));
+
     if (projectStage) {
       const projection = projectStage.$project || {};
-      return rows.map((row) => {
+      return results.map((row) => {
         const out = {};
-        for (const [outField, spec] of Object.entries(projection)) {
+        // rule, not spec: spec is the $group document, two scopes away.
+        for (const [outField, rule] of Object.entries(projection)) {
           // { field: 0 } excludes; { field: 1 } includes verbatim.
-          if (spec === 0 || spec === false) continue;
-          if (spec === 1 || spec === true) { out[outField] = row[outField]; continue; }
+          if (rule === 0 || rule === false) continue;
+          if (rule === 1 || rule === true) { out[outField] = row[outField]; continue; }
           // { outField: '$sourceField' } renames.
-          if (typeof spec === 'string' && spec.startsWith('$')) {
-            const source = spec.slice(1);
+          if (typeof rule === 'string' && rule.startsWith('$')) {
+            const source = rule.slice(1);
             if (source in row) out[outField] = row[source];
             continue;
           }
-          throw new Error(`aggregate(): $project entry "${outField}" must be 0, 1, or a '$field' reference`);
+          throw new Error(`aggregate(): $project entry "${outField}" `
+            + 'must be 0, 1, or a $field reference');
         }
         return out;
       });
     }
-    return rows;
+    return results;
   }
 
   /* -------------------------- instance API ------------------------- */
@@ -630,6 +689,84 @@ class BaseModel {
     return this;
   }
 }
+
+/**
+ * Turns one $group accumulator into a SELECT fragment.
+ *
+ * Returns null for the _id key, which is handled separately. The accumulator is
+ * assumed to have been validated already: aggregate() checks every entry before
+ * it touches the database, so this only ever formats.
+ *
+ * @param {string} name    the output field name
+ * @param {*} op           1, or { $sum: 1 }, or { $avg: '$field' }, ...
+ * @param {object} accums  name -> expression builder
+ */
+function accumulatorSelect(name, op, accums) {
+  if (name === '_id') return null;
+  if (op === 1 || (isPlainObject(op) && op.$sum === 1)) {
+    return `COUNT(*)::int AS ${sql.ident(name)}`;
+  }
+  const found = Object.keys(op || {}).find((k) => accums[k]);
+  return `${accums[found](op[found].slice(1))} AS ${sql.ident(name)}`;
+}
+
+/**
+ * Resolves the $group key in an aggregate pipeline.
+ *
+ * Grouping was hardcoded to `series`: anything else threw, and a pipeline with
+ * no $group was allowed only on comments. Neither restriction came from the SQL,
+ * which could express either. Both came from there being exactly one
+ * implemented caller - the per-series rating rollup.
+ *
+ * Accepted forms, matching MongoDB's shape:
+ *
+ *   _id: '$series'                              one column
+ *   _id: { series: '$series', user: '$user' }   compound key
+ *   _id: null                                   no grouping, one row overall
+ */
+function resolveGroupKey(id, model) {
+  const none = { columns: [], fields: [], compound: false };
+
+  // No $group, or an explicit null: a single row over everything that matched.
+  if (id === undefined || id === null) return none;
+
+  if (typeof id === 'string') {
+    if (!id.startsWith('$')) {
+      throw new Error(
+        "aggregate(): $group._id must be a field reference such as '$series', "
+        + 'a document for a compound key, or null'
+      );
+    }
+    const field = id.slice(1);
+    if (!field) throw new Error('aggregate(): $group._id is empty');
+    return { columns: [sql.columnExpr(field, model)], fields: [field], compound: false };
+  }
+
+  // Compound key: { series: '$series', user: '$user' }
+  if (isPlainObject(id)) {
+    const entries = Object.entries(id);
+    if (!entries.length) throw new Error('aggregate(): $group._id document is empty');
+    const columns = [];
+    const fields = [];
+    for (const [outName, ref] of entries) {
+      if (typeof ref !== 'string' || !ref.startsWith('$')) {
+        throw new Error(`aggregate(): $group._id."${outName}" `
+          + `must be a field reference, e.g. $${outName}`);
+      }
+      fields.push(outName);
+      columns.push(sql.columnExpr(ref.slice(1), model));
+    }
+    return { columns, fields, compound: true };
+  }
+
+  throw new Error(
+    'aggregate(): $group._id must be a field reference, a document for a '
+    + 'compound key, or null'
+  );
+}
+
+BaseModel._accumulatorSelect = accumulatorSelect;
+BaseModel._resolveGroupKey = resolveGroupKey;
 
 BaseModel._tableColumns = tableColumns;
 BaseModel._clearColumnCache = clearColumnCache;
