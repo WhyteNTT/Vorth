@@ -81,10 +81,11 @@ src/
     _sql.js                Mongo-style filter/sort/update -> parameterised SQL
     _base.js               find/populate/save/deleteMany/aggregate
     User, Series, Chapter, Comment, ReadingProgress, Notification,
-    DMCAReport, RefreshToken, AuthToken
+    DMCAReport, DMCACounterNotice, RefreshToken, AuthToken
   services/
     views.js                idempotent view counting
     uploads.js              orphan-upload pruning
+    businessDays.js         business-day arithmetic for the DMCA response window
     storage.js              local / S3-compatible upload drivers
     mailer.js                console / SMTP email transport
   controllers/              request handlers, one file per resource
@@ -443,17 +444,32 @@ the CI job reports an error, because a check that cannot fail proves nothing.
 - **No payment/monetization** — out of scope for this pass.
   Content Policy violations — only DMCA has a formal intake right now.
 - **DMCA counter-notices are implemented but not legally reviewed.** The flow is
-  real: `POST /api/dmca/:id/counter-notice` captures the four §512(g)(3)
-  statements, forwards the counter-notice to the complainant as §512(g)(2)(A)
-  requires, starts a 10-business-day window from that forward, and restores
-  content once the window lapses without a court action
-  (`npm run dmca:sweep-lapsed`). Restoration is deliberately *not* automatic —
-  it is an operator-run sweep — and it only puts back content still removed
-  because of that same notice, so a moderator removal, a Content Policy report
-  or a court order is never undone. Before relying on any of it in production,
-  have counsel review the process and register a DMCA designated agent with the
-  U.S. Copyright Office. Public holidays are excluded from the window only if
-  `DMCA_COUNTER_NOTICE_HOLIDAYS` is configured; weekends always are.
+  real, end to end:
+
+  | Endpoint | Who | What |
+  |---|---|---|
+  | `POST /api/dmca` | anyone | file a takedown notice |
+  | `GET /api/dmca/mine` | the publisher | takedowns against your own content, and the route to contest one |
+  | `POST /api/dmca/:id/counter-notice` | anyone | contest an accepted takedown; captures the four §512(g)(3) statements and forwards them to the complainant |
+  | `GET /api/dmca/counter-notices` | admin | the counter-notice queue |
+  | `PATCH /api/dmca/counter-notices/:id` | admin | record a court action, a restoration, or a withdrawal |
+
+  Accepting a takedown notifies the publisher, and the profile panel lists their
+  claims with the response window. That window starts at 10 business days from
+  the forward — the earliest bound §512(g)(2)(C) allows, so the clock only runs in
+  the complainant's favour — and when it lapses the material may be restored via
+  `npm run dmca:sweep-lapsed`.
+
+  Restoration is deliberately *not* automatic: it is an operator-run sweep, and
+  it only puts back content still removed because of *that* notice, so a moderator
+  removal, a Content Policy report or a court order is never undone. The sweep
+  reports what it declined to restore and why, because a sweep that restored
+  nothing must not be mistakable for one with nothing to do.
+
+  Before relying on any of it in production, have counsel review the process and
+  register a DMCA designated agent with the U.S. Copyright Office. Public
+  holidays are excluded from the window only if `DMCA_COUNTER_NOTICE_HOLIDAYS` is
+  configured; weekends always are.
 - **A removal recorded before `takedown_reason` existed cannot be restored
   automatically.** The guard that decides what a counter-notice may put back
   reads that column. Rows removed by a takedown accepted before this column was
