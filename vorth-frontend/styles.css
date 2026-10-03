@@ -373,6 +373,32 @@ select:focus, input:focus, textarea:focus{ border-color: var(--purple-500); box-
 .notif-text b{ color: var(--text-hi); }
 .notif-time{ font-size: 11px; color: var(--text-faint); margin-top: 2px; display: block; }
 
+/* ---------- DMCA claims against a publisher's own content ---------- */
+.claim-list{ display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.claim-item{
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+.claim-head{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.claim-when{ font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; }
+.claim-status{
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(139,92,246,.16); color: var(--text-hi);
+}
+/* The complainant's description of their own work: the one piece of
+   third-party text rendered in the signed-in profile view. */
+.claim-work{ margin: 0; font-size: 13.5px; color: var(--text-mid); line-height: 1.45; }
+.claim-meta{ margin: 0; font-size: 11.5px; color: var(--text-faint); }
+/* An affirmation row has to read as a statement, not as a form control, so the
+   box is on the left and the whole thing is clickable. */
+.check-row{
+  display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13px; color: var(--text-mid); line-height: 1.45;
+  cursor: pointer; text-transform: none; letter-spacing: normal; font-weight: 400;
+}
+.check-row input{ margin-top: 2px; flex-shrink: 0; }
+
 /* =========================================================
    Series detail
    ========================================================= */

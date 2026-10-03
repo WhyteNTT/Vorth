@@ -44,52 +44,9 @@ const Notification = require('../src/models/Notification');
 const dmcaController = require('../src/controllers/dmcaController');
 const counter = require('../src/controllers/dmcaCounterNoticeController');
 const { businessDaysBetween } = require('../src/services/businessDays');
+const { invokeHandler } = require('./helpers/invokeHandler');
 
 const MARK = `cn${Date.now().toString(36)}`;
-
-/** Minimal Express double, enough for the asyncHandler-wrapped controllers. */
-function res() {
-  const r = {
-    statusCode: 200,
-    body: undefined,
-    status(c) { r.statusCode = c; return r; },
-    json(p) { r.body = p; return r; },
-  };
-  return r;
-}
-
-/**
- * Runs a controller handler.
- *
- * Accepts either shape the controllers use: a bare asyncHandler, or the
- * [validators..., asyncHandler] array, in which case the terminal handler is
- * the one under test. Validation itself is covered by the HTTP suite; this
- * bypasses it deliberately so the state machine can be driven directly.
- *
- * Settles when the handler either responds or calls next(err), whichever comes
- * first. An earlier version fell back to setImmediate, which raced the handler:
- * every assertion ran against a half-finished request and reported success for
- * calls that had in fact thrown.
- */
-function invoke(chain, req) {
-  const handler = typeof chain === 'function' ? chain : chain[chain.length - 1];
-  return new Promise((resolve) => {
-    const r = res();
-    let settled = false;
-    const settle = (error) => {
-      if (settled) return;
-      settled = true;
-      resolve({ res: r, error: error || null });
-    };
-    const json = r.json.bind(r);
-    r.json = (payload) => {
-      json(payload);
-      settle(null);
-      return r;
-    };
-    handler(req, r, settle);
-  });
-}
 
 /*
  * The pool is a module singleton, so it is connected once for the whole file and
@@ -160,7 +117,7 @@ async function acceptTakedown(admin, chapterId, seriesId) {
     infringingSeries: seriesId,
   });
 
-  const { error } = await invoke(dmcaController.resolve, {
+  const { error } = await invokeHandler(dmcaController.resolve, {
     params: { id: report._id },
     body: { status: 'accepted', adminNotes: 'Takedown accepted in test.' },
     user: { id: admin.id },
@@ -242,7 +199,7 @@ test('a counter-notice records the window and the takedown records what it remov
     );
 
     /* --- the subscriber counters --------------------------------------- */
-    const filed = await invoke(counter.submitCounterNotice, {
+    const filed = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id },
       body: counterNoticeBody(),
     });
@@ -277,7 +234,7 @@ test('a counter-notice records the window and the takedown records what it remov
     );
 
     /* --- a court action keeps it down ----------------------------------- */
-    const contested = await invoke(counter.resolveCounterNotice, {
+    const contested = await invokeHandler(counter.resolveCounterNotice, {
       params: { id: notice._id },
       body: { outcome: 'court_action', adminNotes: 'They filed.' },
       user: { id: admin.id },
@@ -300,14 +257,14 @@ test('a second counter-notice for the same takedown is refused', { skip: !proces
   const report = await acceptTakedown(admin, world.chapter.id, world.series.id);
 
   try {
-    const first = await invoke(counter.submitCounterNotice, {
+    const first = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.equal(first.error, null, first.error && first.error.message);
 
     // The unique index is the only thing that stops two submissions racing past
     // each other and both starting a clock on the same takedown.
-    const second = await invoke(counter.submitCounterNotice, {
+    const second = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id },
       body: counterNoticeBody({ subscriberEmail: 'other@example.test' }),
     });
@@ -331,7 +288,7 @@ test('an unaccepted takedown cannot be counter-noticed', { skip: !process.env.VO
   try {
     // Nothing was removed, so there is nothing to contest. Accepting this would
     // mean a counter-notice against a takedown that never took anything down.
-    const { error } = await invoke(counter.submitCounterNotice, {
+    const { error } = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.ok(error, 'a pending takedown accepted a counter-notice');
@@ -352,7 +309,7 @@ test('a lapsed window restores the chapter but not a series with another chapter
 
   const report = await acceptTakedown(admin, world.chapter.id, world.series.id);
   try {
-    const filed = await invoke(counter.submitCounterNotice, {
+    const filed = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.equal(filed.error, null, filed.error && filed.error.message);
@@ -406,7 +363,7 @@ test('content removed for another reason survives a lapsed counter-notice', { sk
   const report = await acceptTakedown(admin, world.chapter.id, world.series.id);
 
   try {
-    const filed = await invoke(counter.submitCounterNotice, {
+    const filed = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.equal(filed.error, null, filed.error && filed.error.message);
@@ -494,7 +451,7 @@ test('accepting a takedown notifies the publisher and lets them find it', { skip
      * And the publisher can actually reach it: the endpoint is keyed on the
      * takedown id, so without this list the flow exists but cannot be used.
      */
-    const listed = await invoke(counter.listMyTakedowns, {
+    const listed = await invokeHandler(counter.listMyTakedowns, {
       user: { id: world.owner.id },
     });
     assert.equal(listed.error, null, listed.error && listed.error.message);
@@ -525,7 +482,7 @@ test('accepting a takedown notifies the publisher and lets them find it', { skip
       password: 'correct horse battery',
       agreedToTermsAt: new Date(), ageConfirmed: true,
     });
-    const theirs = await invoke(counter.listMyTakedowns, { user: { id: stranger.id } });
+    const theirs = await invokeHandler(counter.listMyTakedowns, { user: { id: stranger.id } });
     assert.equal(theirs.error, null);
     assert.equal(
       theirs.res.body.takedowns.length, 0,
@@ -534,12 +491,12 @@ test('accepting a takedown notifies the publisher and lets them find it', { skip
     await User.deleteMany({ username: `${MARK}g` });
 
     /* --- once countered, it is no longer open, and shows the deadline ------ */
-    const filed = await invoke(counter.submitCounterNotice, {
+    const filed = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.equal(filed.error, null, filed.error && filed.error.message);
 
-    const after = await invoke(counter.listMyTakedowns, { user: { id: world.owner.id } });
+    const after = await invokeHandler(counter.listMyTakedowns, { user: { id: world.owner.id } });
     const row = after.res.body.takedowns[0];
     assert.equal(row.canCounterNotice, false, 'a second counter-notice would be offered');
     assert.ok(row.counterNotice, 'the publisher cannot see their own counter-notice');
@@ -560,19 +517,19 @@ test('a counter-notice cannot be resolved twice', { skip: !process.env.VORTH_LIV
   const report = await acceptTakedown(admin, world.chapter.id, world.series.id);
 
   try {
-    const filed = await invoke(counter.submitCounterNotice, {
+    const filed = await invokeHandler(counter.submitCounterNotice, {
       params: { id: report._id }, body: counterNoticeBody(),
     });
     assert.equal(filed.error, null, filed.error && filed.error.message);
 
-    const first = await invoke(counter.resolveCounterNotice, {
+    const first = await invokeHandler(counter.resolveCounterNotice, {
       params: { id: filed.res.body.counterNoticeId },
       body: { outcome: 'court_action' },
       user: { id: admin.id },
     });
     assert.equal(first.error, null, first.error && first.error.message);
 
-    const second = await invoke(counter.resolveCounterNotice, {
+    const second = await invokeHandler(counter.resolveCounterNotice, {
       params: { id: filed.res.body.counterNoticeId },
       body: { outcome: 'restore' },
       user: { id: admin.id },

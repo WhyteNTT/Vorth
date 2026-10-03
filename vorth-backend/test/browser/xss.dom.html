@@ -6,14 +6,19 @@
 </head>
 <body>
 <!--
-  Loads the real vorth-frontend/lib/safe.js and replays every payload that
-  previously executed, asserting that the browser's HTML parser does not
-  create any event-handler attribute or injected element.
+  Loads the real vorth-frontend/lib/safe.js and lib/claims.js and replays every
+  payload that previously executed, asserting that the browser's HTML parser
+  does not create any event-handler attribute or injected element.
+
+  The claim cases matter most: that text is typed by an anonymous complainant
+  and rendered on a signed-in page for a different user, which is the worst
+  place for a stored XSS to land.
 
   Driven by test/browser/run.mjs via the CDP browser harness.
 -->
 <div id="host"></div>
 <script src="../../../vorth-frontend/lib/safe.js"></script>
+<script src="../../../vorth-frontend/lib/claims.js"></script>
 <script>
 window.__RESULT__ = { passed: 0, failed: 0, cases: [] };
 
@@ -96,7 +101,86 @@ reset();
     host.innerHTML);
 }
 
-/* ---- 6. nothing fired spontaneously ---------------------------------- */
+/* ---- 6. DMCA claims shown to a publisher ----------------------------- */
+reset();
+{
+  /*
+   * The one place on a signed-in page where the text was typed by somebody
+   * else. lib/claims.js is the code that actually ships for this - the point of
+   * factoring it out is that this case is not testing a copy of the template.
+   */
+  const hostile = {
+    id: ATTR,
+    removedAt: '2026-03-06T00:00:00Z',
+    copyrightedWorkDescription: IMG + '" onmouseover="window.__FIRED__=true',
+    infringingUrlDescription: '<script>window.__FIRED__=true<\/script>',
+    counterNotice: null,
+  };
+  host.innerHTML = VorthClaims.claimList([hostile]);
+
+  /*
+   * Asserted against parsed attributes and elements, never against
+   * innerHTML.includes(...). innerHTML serialises escaped text back to the
+   * literal source, so "onmouseover" appears as *text* even when nothing was
+   * injected - the string check reports a payload that never executed, which is
+   * how a real escape gets "fixed" into a broken one.
+   */
+  const els = [...host.querySelectorAll('*')];
+  const handlerAttrs = els.filter((e) => e.hasAttribute('onmouseover') || e.hasAttribute('onerror'));
+  record('a claim description cannot inject an element or a handler',
+    host.querySelectorAll('img, script').length === 0 && handlerAttrs.length === 0,
+    handlerAttrs.length
+      ? handlerAttrs.map((e) => e.outerHTML).join(' | ')
+      : host.innerHTML);
+
+  record('a claim id cannot break out of data-counter-notice',
+    [...host.querySelectorAll('[data-counter-notice]')]
+      .every((b) => !b.hasAttribute('onmouseover') && b.dataset.counterNotice.includes('evil.tld')),
+    host.innerHTML);
+
+  // And the text is still *shown*, escaped, rather than silently dropped.
+  record('the claim description is shown to the publisher, not swallowed',
+    (host.querySelector('.claim-work') || {}).textContent.includes('<img'),
+    JSON.stringify((host.querySelector('.claim-work') || {}).textContent));
+
+  // Nothing may have executed while that markup was parsed.
+  record('no claim payload executed',
+    window.__FIRED__ !== true,
+    `__FIRED__ = ${String(window.__FIRED__)}`);
+}
+
+/* ---- 7. a claim already contested shows the deadline, not the button ---- */
+reset();
+{
+  host.innerHTML = VorthClaims.claimList([{
+    id: 'abc',
+    removedAt: '2026-03-06T00:00:00Z',
+    copyrightedWorkDescription: 'The Lantern',
+    counterNotice: { id: 'cn1', status: 'pending', responseDeadline: '2026-03-20T00:00:00Z' },
+  }]);
+  const html = host.innerHTML;
+  record('a contested claim hides the button and shows the window',
+    host.querySelectorAll('[data-counter-notice]').length === 0
+      && html.includes('Counter-notice sent')
+      && html.includes('court action'),
+    html);
+}
+
+/* ---- 8. an unparseable date is a dash, not a crash --------------------- */
+reset();
+{
+  let threw = false;
+  let html = '';
+  try {
+    html = VorthClaims.claimList([{
+      id: 'x', removedAt: 'not-a-date', copyrightedWorkDescription: 'y', counterNotice: null,
+    }]);
+  } catch (err) { threw = true; }
+  record('an unparseable removal date renders an em dash',
+    !threw && html.includes('—'), threw ? 'threw' : html);
+}
+
+/* ---- 9. nothing fired spontaneously --------------------------------- */
 setTimeout(() => {
   record('no injected handler executed on its own', window.__FIRED__ !== true,
     `__FIRED__ = ${String(window.__FIRED__)}`);

@@ -46,7 +46,10 @@ test('browser: payloads cannot produce executable attributes or elements', async
     return;
   }
 
-  assert.ok(result.cases.length >= 6, `expected the full case list, got ${result.cases.length}`);
+  assert.ok(
+    result.cases.length >= 12,
+    `expected the full case list, got ${result.cases.length}`
+  );
   for (const c of result.cases) {
     assert.ok(c.ok, `${c.name}\n    DOM: ${c.detail}`);
   }

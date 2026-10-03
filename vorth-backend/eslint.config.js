@@ -74,4 +74,24 @@ module.exports = [
     },
     rules: { 'no-unused-expressions': 'off' },
   },
+  {
+    /*
+     * page.evaluate() bodies are serialised and evaluated *inside* the browser,
+     * so they legitimately reference window, document and the page's own globals.
+     * Declaring them only for the end-to-end file keeps them out of the rest of
+     * the suite, where referring to window would be a real mistake - a test
+     * quietly asserting nothing because it read an undefined global.
+     */
+    files: ['test/e2e.test.js'],
+    languageOptions: {
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        localStorage: 'readonly',
+        // The frontend bundle's globals, as index.html loads them.
+        VorthSafe: 'readonly',
+        VorthClaims: 'readonly',
+      },
+    },
+  },
 ];

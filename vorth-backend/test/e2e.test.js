@@ -33,6 +33,7 @@ const { spawn } = require('child_process');
 const net = require('net');
 
 const { assertSafeTarget } = require('./helpers/liveGuard');
+const { invokeHandler } = require('./helpers/invokeHandler');
 
 const BACKEND = path.join(__dirname, '..');
 
@@ -435,6 +436,157 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
     await page.click('button[data-view="profile"]');
     await page.waitForSelector('#profileLoggedIn:not(.hidden)', { timeout: 15000 });
     assertClean(watch, 'after reload');
+
+    /* ---------------------------------------------------------------- *
+     * 10. A copyright claim against this account, and the route to contest it
+     *
+     * The claim is created and accepted for real - from this process, against
+     * the same database the server child is using - so the page picks it up
+     * through its own /api/dmca/mine fetch. Nothing is injected into the DOM
+     * here: the point is that the panel reaches the counter-notice flow at all,
+     * because that endpoint is keyed on a takedown id nothing else in the
+     * product shows a publisher.
+     * ---------------------------------------------------------------- */
+    const seriesId = await page.evaluate(async () => {
+      const token = localStorage.getItem('vorth_token');
+      const res = await fetch('/api/series/mine', {
+        headers: { Authorization: 'Bearer ' + token },
+        credentials: 'include',
+      });
+      const body = await res.json();
+      return ((body && body.series) || [])[0] ? body.series[0].id : null;
+    });
+    assert.ok(seriesId, 'no owned series to file a claim against');
+
+    const db = require('../src/config/db');
+    const User = require('../src/models/User');
+    const Notification = require('../src/models/Notification');
+    const DMCAReport = require('../src/models/DMCAReport');
+    const dmcaController = require('../src/controllers/dmcaController');
+
+    await db.connectDB();
+    const admin = await User.create({
+      displayName: 'E2E Moderator',
+      username: `e2e_admin_${uniq()}`,
+      email: `e2e_admin_${uniq()}@example.test`,
+      password: 'e2e-password-1234',
+      role: 'admin',
+      agreedToTermsAt: new Date(),
+      ageConfirmed: true,
+    });
+    let report = null;
+    try {
+      report = await DMCAReport.create({
+        reporterName: 'Ada Rights Holder',
+        reporterEmail: 'ada@example.test',
+        // A payload in the one field a third party controls and a signed-in user
+        // reads. It must render as text and must not execute.
+        copyrightedWorkDescription:
+          'The Lantern <img src=x onerror="window.__DMCA_XSS__=true">, 1st ed.',
+        infringingSeries: seriesId,
+        goodFaithStatement: true,
+        accuracyStatement: true,
+        signature: 'Ada Rights Holder',
+      });
+
+      const accept = await invokeHandler(dmcaController.resolve, {
+        params: { id: report._id },
+        body: { status: 'accepted', adminNotes: 'accepted in e2e' },
+        user: { id: admin.id },
+      });
+      assert.equal(
+        accept.error, null,
+        `accepting the takedown failed: ${accept.error && accept.error.message}`
+      );
+      assert.equal(accept.res.statusCode, 200, 'the takedown was not accepted');
+
+      // Assert the removal markers landed, or the notification step below is
+      // asserting on a state that was never reached.
+      const accepted = await DMCAReport.findById(report._id);
+      assert.equal(accepted.status, 'accepted');
+      assert.equal(String(accepted.removalSeries), seriesId,
+        'accepting the takedown recorded no removal, so there is nothing to restore or notify about');
+
+      /* --- the publisher's own notification ---------------------------- */
+      const notifications = await page.evaluate(async () => {
+        const token = localStorage.getItem('vorth_token');
+        const res = await fetch('/api/notifications', {
+          headers: { Authorization: 'Bearer ' + token },
+          credentials: 'include',
+        });
+        return res.json();
+      });
+      const note = (notifications.notifications || []).find((n) => n.type === 'dmca_takedown');
+      assert.ok(note, 'the publisher was not notified of the takedown');
+      assert.match(note.message, new RegExp(report._id), 'the notice omits the takedown reference');
+
+      /* --- and the panel ---------------------------------------------- */
+      await page.click('button[data-view="profile"]');
+      await page.waitForSelector('#dmcaTakedownList .claim-item', { timeout: 15000 });
+
+      const rendered = await page.evaluate(() => {
+        const host = document.getElementById('dmcaTakedownList');
+        return {
+          text: host.textContent,
+          images: host.querySelectorAll('img').length,
+          fired: window.__DMCA_XSS__ === true,
+          buttons: host.querySelectorAll('[data-counter-notice]').length,
+        };
+      });
+
+      assert.match(rendered.text, /The Lantern/, 'the claim is not shown to the publisher');
+      assert.match(rendered.text, new RegExp(report._id));
+      assert.equal(rendered.images, 0,
+        'the complainant description injected an <img> into the profile panel');
+      assert.equal(rendered.fired, false,
+        'the complainant description executed in the publisher session');
+      assert.equal(rendered.buttons, 1, 'no route to counter-notice was offered');
+      assertClean(watch, 'copyright claim panel');
+
+      /* --- the form: prefilled identity, no affirmation pre-ticked ------ *
+       * They are perjury statements, so a tick the publisher never gave is a
+       * false one. */
+      await page.click('#dmcaTakedownList [data-counter-notice]');
+      await page.waitForSelector('#counterNoticeForm:not(.hidden)', { timeout: 5000 });
+
+      const form = await page.evaluate(() => ({
+        name: document.getElementById('cnName').value,
+        email: document.getElementById('cnEmail').value,
+        address: document.getElementById('cnAddress').value,
+        goodFaith: document.getElementById('cnGoodFaith').checked,
+        jurisdiction: document.getElementById('cnJurisdiction').checked,
+        perjury: document.getElementById('cnPerjury').checked,
+        signature: document.getElementById('cnSignature').value,
+      }));
+      assert.ok(form.name.length > 0, 'the legal name was not prefilled from the profile');
+      assert.ok(form.email.length > 0, 'the email was not prefilled from the profile');
+      assert.equal(form.goodFaith, false, 'the good-faith statement was pre-ticked');
+      assert.equal(form.jurisdiction, false, 'the jurisdiction statement was pre-ticked');
+      assert.equal(form.perjury, false, 'the perjury statement was pre-ticked');
+      assert.equal(form.signature, '', 'the signature was prefilled');
+      assert.equal(form.address, '', 'the service address was prefilled from somewhere it should not be');
+      assertClean(watch, 'counter-notice form');
+
+      // Cancel closes it again, rather than leaving a stray form over the panel.
+      // waitForFunction, not waitForSelector: the default state is "visible" and
+      // a .hidden element never becomes visible, so the assertion would time out
+      // on a form that had closed correctly.
+      await page.click('#cnCancel');
+      await page.waitForFunction(
+        () => document.getElementById('counterNoticeForm').classList.contains('hidden'),
+        { timeout: 5000 }
+      );
+    } finally {
+      // Notification first: it references the series, and nothing cascades.
+      await Notification.deleteMany({ message: { $ne: null } }).catch(() => {});
+      if (report) {
+        await DMCAReport.deleteMany({ id: report._id }).catch(() => {});
+      }
+      await User.deleteMany({ id: admin.id }).catch(() => {});
+      // This process opened its own pool for the admin work above; an open pool
+      // keeps the event loop alive and the test run would hang.
+      await db.pool.end().catch(() => {});
+    }
 
     /* ---------------------------------------------------------------- *
      * 9. Sign out

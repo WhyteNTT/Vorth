@@ -401,6 +401,72 @@
         <button class="btn btn-ghost sm" id="logoutBtn">Sign out</button>
       </div>
       <div class="stat-row" id="profileStats"></div>
+
+      <!--
+        Copyright claims against this publisher's content, with the route to
+        contest one. Without this the counter-notice endpoint is keyed on an id
+        nothing in the product shows a publisher, so the flow exists but cannot
+        be used without devtools.
+      -->
+      <div class="section-row">
+        <h2 class="section-title">Copyright claims</h2>
+        <button class="btn btn-ghost sm" id="dmcaRefreshBtn" type="button">Refresh</button>
+      </div>
+      <div id="dmcaTakedownList" class="claim-list">
+        <p class="empty-hint">No copyright claims against your content.</p>
+      </div>
+
+      <!--
+        The four statements 17 U.S.C. 512(g)(3) requires. Each is required, and
+        each is made under penalty of perjury, so none is pre-ticked. The
+        jurisdiction statement in particular is what binds the publisher to accept
+        service of process.
+      -->
+      <form id="counterNoticeForm" class="auth-form hidden" novalidate>
+        <h3 class="section-title">File a counter-notice</h3>
+        <p class="form-hint" id="counterNoticeIntro"></p>
+
+        <label>Full legal name
+          <input type="text" id="cnName" required maxlength="120" autocomplete="name">
+        </label>
+        <label>Email address
+          <input type="email" id="cnEmail" required maxlength="200" autocomplete="email">
+        </label>
+        <label>Postal address
+          <input type="text" id="cnAddress" required maxlength="300"
+                 autocomplete="street-address"
+                 placeholder="So a court can serve you with process">
+        </label>
+        <label>What was removed, and where it was
+          <textarea id="cnMaterial" required maxlength="2000" rows="3"></textarea>
+        </label>
+
+        <label class="check-row">
+          <input type="checkbox" id="cnGoodFaith" required>
+          <span>I have a good faith belief this material was removed as a result of
+            mistake or misidentification.</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="cnJurisdiction" required>
+          <span>I consent to the jurisdiction of the Federal District Court for the
+            district where I reside or where the material was located, and will
+            accept service of process from the person who filed the notice.</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="cnPerjury" required>
+          <span>The statements above are made under penalty of perjury.</span>
+        </label>
+        <label>Typed signature
+          <input type="text" id="cnSignature" required maxlength="120">
+        </label>
+
+        <div class="auth-actions">
+          <button type="submit" class="btn btn-primary" id="cnSubmit">Send counter-notice</button>
+          <button type="button" class="btn btn-ghost sm" id="cnCancel">Cancel</button>
+        </div>
+        <p class="form-hint" id="cnHint"></p>
+      </form>
+
       <div class="section-row"><h2 class="section-title">Reading history</h2></div>
       <div class="card-grid" id="profileHistoryGrid"></div>
     </div>
@@ -417,7 +483,6 @@
       <button class="tab active" data-upload="series">New series</button>
       <button class="tab" data-upload="chapter">New chapter</button>
     </div>
-
     <form id="seriesForm" class="upload-form">
       <div class="upload-grid">
         <label class="cover-drop" id="coverDrop" for="coverInput" tabindex="0" aria-label="Upload a book cover image">
@@ -470,6 +535,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="lib/safe.js"></script>
+<script src="lib/claims.js"></script>
 <script src="lib/apiError.js"></script>
 <script src="script.js"></script>
 </body>
