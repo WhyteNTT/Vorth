@@ -684,10 +684,11 @@ test('end to end: the card glyph never covers the series title', { skip }, async
           // The trending row is a horizontal carousel, so later cards are scrolled
           // off to the right. elementFromPoint returns null outside the viewport,
           // which reads as "nothing is on top" rather than "we measured nothing".
-          // eslint-disable-next-line no-await-in-loop
+          //
+          // Sequential on purpose: each card has to be scrolled into view before it
+          // is measured, so the measurements cannot be taken concurrently.
           await covers[i].scrollIntoViewIfNeeded();
 
-          // eslint-disable-next-line no-await-in-loop
           const r = await page.evaluate((index) => {
             const cover = [...document.querySelectorAll('#trendingRow .card-cover')][index];
             const glyph = cover.querySelector('.glyph');
