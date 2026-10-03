@@ -149,6 +149,17 @@ jobs:
           VORTH_LIVE_DB: '1'
         run: npm run test:live
 
+      # The browser suite already needs Chromium, so the end-to-end job reuses
+      # that install rather than paying for it twice.
+      - name: End to end (real server, real browser)
+        env:
+          VORTH_LIVE_DB: '1'
+          VORTH_E2E: '1'
+          MAIL_TRANSPORT: disabled
+        run: |
+          npx --yes playwright@1.49.0 install --with-deps chromium
+          npm run test:e2e
+
       - name: Seed script is idempotent and produces a browsable catalog
         env:
           MAIL_TRANSPORT: disabled

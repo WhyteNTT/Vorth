@@ -12,11 +12,11 @@
 const COLUMNS = {
   users: ['id', 'display_name', 'username', 'email', 'password', 'role', 'bio', 'library',
     'downloads', 'agreed_to_terms_at', 'age_confirmed', 'is_banned', 'ban_reason',
-    'last_login_at', 'created_at', 'updated_at'],
+    'email_verified_at', 'last_login_at', 'created_at', 'updated_at'],
   series: ['id', 'title', 'slug', 'type', 'owner', 'author', 'artist', 'genres', 'tags',
     'status', 'synopsis', 'cover_image', 'views', 'last_daily_reset', 'last_weekly_reset',
     'rating_avg', 'rating_count', 'chapter_count', 'rights_attested_at', 'is_removed',
-    'takedown_reason', 'created_at', 'updated_at'],
+    'takedown_reason', 'search_vector', 'created_at', 'updated_at'],
   chapters: ['id', 'series', 'num', 'title', 'paragraphs', 'pages', 'views', 'is_removed',
     'created_at', 'updated_at'],
   comments: ['id', 'series', 'user', 'rating', 'text', 'parent', 'is_removed', 'created_at', 'updated_at'],
@@ -28,6 +28,9 @@ const COLUMNS = {
     'infringing_chapter', 'infringing_url_description', 'good_faith_statement',
     'accuracy_statement', 'signature', 'status', 'admin_notes', 'resolved_at', 'resolved_by',
     'created_at', 'updated_at'],
+  content_reports: ['id', 'category', 'description', 'details', 'reported_series',
+    'reported_chapter', 'reported_comment', 'reporter_email', 'reporter_account', 'status',
+    'admin_notes', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'],
   view_events: ['id', 'series', 'chapter', 'viewer', 'window_start', 'created_at'],
   refresh_tokens: ['id', 'user', 'token_hash', 'user_agent', 'ip', 'expires_at',
     'revoked_at', 'replaced_by', 'created_at'],
@@ -147,6 +150,9 @@ function createFakePool(opts = {}) {
     },
   };
 
+  // Alias, because `log` reads like a logger and these are the captured
+  // statements tests assert against.
+  pool.statements = log;
   return pool;
 }
 

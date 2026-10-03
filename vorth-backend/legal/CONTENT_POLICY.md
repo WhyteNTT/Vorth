@@ -59,11 +59,35 @@ content:
 
 ## 4. Reporting content
 
-Users can report content that violates this policy via
-[describe your in-app reporting mechanism, or note that one needs to
-be built — the current backend does not yet expose a general
-"report content" endpoint distinct from the DMCA intake; consider
-adding one for non-copyright violations].
+Content that violates this policy can be reported through
+`POST /api/reports`. The report takes a category, a short description, an
+optional longer detail, and a reference to the series, chapter or comment being
+reported.
+
+The categories correspond one-for-one to the prohibited-content list in
+section 1:
+
+| Category | Use for |
+|---|---|
+| `sexual_minors` | Any sexualisation of minors, including fictional depiction |
+| `child_safety` | Child grooming or exploitation |
+| `non_consensual_intimate` | Non-consensual intimate imagery of real people |
+| `violent_extremism` | Terrorism, violent extremism, instructions for mass harm |
+| `hate_harassment` | Harassment, threats or incitement, including on a protected characteristic |
+| `malware_phishing` | Malware, phishing, or links that would compromise a reader's device |
+| `copyright_or_trademark` | Copyright or trademark infringement |
+| `other` | Anything the list above does not cover |
+
+No account is required. Supplying an email address is optional, but it is how
+we tell you the outcome.
+
+**Copyright and trademark claims have a separate, formal route.** Use the DMCA
+notice at `POST /api/dmca` instead. That form carries the statutory elements -
+good-faith and accuracy statements, and a signature - which a policy report does
+not ask for and cannot act on. A report filed under
+`copyright_or_trademark` is triaged and then routed to that formal process; it
+is not a substitute for it.
+
 
 ## 5. Appeals
 

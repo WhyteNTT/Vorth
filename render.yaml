@@ -1,100 +1,160 @@
-# Render blueprint for the Vorth API.
+# Render blueprint for Vorth.
 #
-# The API serves both /api/* and the static frontend, so this is a single
-# web service. Create the database first (Render -> New -> Postgres) and its
-# connection string is exposed as DATABASE_URL.
+# One web service: the API also serves the static frontend, so there is no second
+# service to keep in sync. The database is declared below and linked into the
+# service's DATABASE_URL, so a blueprint deploy provisions both.
 #
-# Set these in the Render dashboard (or as a .env file on the host):
-#   JWT_SECRET              a long random string — required, the app exits without it
-#   CLIENT_ORIGINS          comma-separated frontend origins, e.g. https://vorth.onrender.com
-#   PUBLIC_URL              https://vorth.onrender.com  (used in emailed links)
-#   SECURE_COOKIES          true in production
-#   MAIL_TRANSPORT          smtp, plus SMTP_*, to actually send mail
-#   RATE_LIMIT_STORE        postgres so limits work across instances
-#   STORAGE_DRIVER          s3 plus S3_* once uploads should outlive a deploy
+# Required before the site is publicly usable - all four are flagged at boot by
+# src/config/preflight.js, and VORTH_STRICT_CONFIG=1 turns the first three into a
+# refusal to start:
+#
+#   CLIENT_ORIGINS        comma-separated allowed origins. With one service
+#                         serving both, the site's own origin is enough.
+#   PUBLIC_URL            the site origin. Without it every emailed reset and
+#                         verification link is relative and unusable.
+#   MAIL_TRANSPORT=smtp   plus SMTP_*. Left unset, password reset and email
+#                         verification links are printed to the log and reach
+#                         nobody, so both features are dead.
+#   STORAGE_DRIVER=s3     plus S3_*. Render's filesystem is ephemeral, so local
+#                         uploads are lost on every deploy and on every restart.
+#
+# Separately, and not a configuration matter: register a DMCA designated agent
+# with the U.S. Copyright Office before operating publicly. It takes days, and
+# the takedown process in legal/DMCA_POLICY.md is incomplete without it.
 
 services:
   - type: web
     name: vorth-api
     runtime: node
+    # 'starter' is a paid plan. 'free' spins down after inactivity, which is
+    # unsuitable for a public site but fine to try the deployment.
     plan: starter
     region: frankfurt
-    buildCommand: npm ci
+
+    # The repo is a monorepo; the app lives in vorth-backend/.
+    rootDir: vorth-backend
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
+
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      # Render injects DATABASE_URL for a Render-managed Postgres.
+
+      # PORT is injected by Render and must be honoured. It is deliberately not
+      # set here: hardcoding it was wrong, and the app defaults to 5000 only when
+      # nothing supplies one.
+
+      # Render's managed Postgres, linked from the `databases` block below. This
+      # is what makes a blueprint deploy actually usable; leaving it as
+      # `sync: false` provisions a service with no database.
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: vorth-db
+          property: connectionString
+
       - key: DATABASE_SSL
         value: 'true'
+
+      # A random 64-char value per environment, regenerated on redeploy only if
+      # you clear it. Rotating it invalidates every access token.
       - key: JWT_SECRET
         generateValue: true
+      # Short-lived access token; the httpOnly refresh cookie carries the
+      # session. These only work together.
       - key: JWT_EXPIRES_IN
         value: 15m
       - key: REFRESH_TOKEN_DAYS
         value: '30'
-      - key: SECURE_COOKIES
-        value: 'true'
       - key: REFRESH_COOKIE
         value: 'true'
+      - key: SECURE_COOKIES
+        value: 'true'
+
+      # Correct behind Render's proxy. If the service is ever exposed directly,
+      # this becomes a spoofing hazard, since X-Forwarded-For becomes client
+      # controlled and the rate limiters key on it.
+      - key: TRUST_PROXY
+        value: 'true'
+
+      # Counters live in the database, so they survive restarts and are shared
+      # if the service is scaled past one instance.
+      - key: RATE_LIMIT_STORE
+        value: postgres
+      - key: RATE_LIMIT_WINDOW_MINUTES
+        value: '15'
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: '600'
+      # Deliberately tighter, and keyed on IP *and* the submitted identifier so
+      # one attacker cannot lock out a whole shared NAT.
+      - key: AUTH_RATE_LIMIT_MAX_REQUESTS
+        value: '20'
+
+      # Refuse to boot on a configuration error rather than coming up healthy
+      # with a feature silently dead. Set to '0' to boot anyway and read the log.
+      - key: VORTH_STRICT_CONFIG
+        value: '1'
+
+      # ---- Set these in the dashboard before going public ----
       - key: CLIENT_ORIGINS
         sync: false
       - key: PUBLIC_URL
         sync: false
-      - key: TRUST_PROXY
-        value: 'true'
-      # Rate limiting survives restarts and is shared across instances.
-      - key: RATE_LIMIT_STORE
-        value: postgres
-      - key: RATE_LIMIT_MAX_REQUESTS
-        value: '600'
-      - key: AUTH_RATE_LIMIT_MAX_REQUESTS
-        value: '20'
-      # Local disk by default; switch to s3 when you want uploads to persist.
-      - key: STORAGE_DRIVER
-        value: local
-      - key: S3_BUCKET
+      - key: DMCA_CONTACT_EMAIL
         sync: false
-      - key: S3_REGION
+      - key: SUPPORT_CONTACT_EMAIL
         sync: false
-      - key: S3_ENDPOINT
-        sync: false
-      - key: S3_ACCESS_KEY_ID
-        sync: false
-      - key: S3_SECRET_ACCESS_KEY
-        sync: false
-      - key: S3_PUBLIC_BASE_URL
-        sync: false
-      # 'console' logs mail instead of sending it. Set to 'smtp' to really send.
+
+      # Mail. Unset is treated as an error in production, which is the point:
+      # the alternative is shipping password reset that cannot work.
       - key: MAIL_TRANSPORT
-        value: console
+        sync: false
       - key: MAIL_FROM
         sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
         value: '587'
+      - key: SMTP_SECURE
+        value: 'false'
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS
         sync: false
-      - key: SMTP_SECURE
-        value: 'false'
+      # Only turn this on once SMTP works, or nobody can ever verify.
       - key: REQUIRE_EMAIL_VERIFICATION
         value: 'false'
 
+      # Object storage. Unset is treated as an error in production, because
+      # Render's disk does not survive a redeploy.
+      - key: STORAGE_DRIVER
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      # Leave S3_ENDPOINT empty for AWS S3. Set it for R2, MinIO, B2 or Ceph;
+      # a custom endpoint is addressed path-style, bucket included in the path.
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # Set for a world-readable bucket or a CDN in front of one. Left empty,
+      # uploads are served through short-lived presigned GETs.
+      - key: S3_PUBLIC_BASE_URL
+        sync: false
+
 databases:
-  # Render-managed Postgres. VORTH owns the schema and applies it on boot, so
-  # there is no separate migration step to keep in step.
+  # Render-managed Postgres. Vorth owns its schema and applies it on boot, so
+  # there is no separate migration step to keep in step. The change is purely
+  # additive - new tables and one new column - so deploying over an existing
+  # database upgrades it in place.
   - name: vorth-db
     plan: basic-256mb
     region: frankfurt
     postgresMajorVersion: '16'
-    ipAllowList: []      # only reachable from inside Render
+    ipAllowList: []      # reachable only from inside Render
     databaseName: vorth

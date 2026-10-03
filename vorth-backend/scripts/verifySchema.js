@@ -27,7 +27,7 @@ const { pool } = require('../src/config/db');
 const TABLES = [
   'users', 'series', 'chapters', 'comments', 'notifications',
   'reading_progress', 'dmca_reports', 'view_events',
-  'refresh_tokens', 'auth_tokens', 'rate_limit_buckets',
+  'refresh_tokens', 'auth_tokens', 'rate_limit_buckets', 'content_reports',
 ];
 
 /**
@@ -57,7 +57,7 @@ const REQUIRED_INDEXES = [
   'idx_refresh_user', 'idx_refresh_active',
   'idx_authtok_user', 'idx_authtok_expiry',
   'idx_view_events_chap', 'idx_ratelimit_window', 'idx_users_library',
-  'idx_dmca_status',
+  'idx_dmca_status', 'idx_reports_status', 'idx_reports_series', 'idx_reports_chapter',
 ];
 
 /** Columns the code reads unconditionally. */

@@ -98,7 +98,41 @@ async function connectDB() {
     -- One row per (chapter, viewer, window). The UNIQUE constraint is what
     -- makes view counting idempotent: a repeat read inside the same window
     -- conflicts and does not increment anything.
-    -- Full-text search vector over the three fields a reader would search by.
+    /*
+   * Content Policy reports.
+   *
+   * Separate from dmca_reports on purpose. A DMCA notice is a copyright claim
+   * carrying statutory weight and sworn statements; a policy report is a house
+   * rule. Keeping them apart stops the two being confused, and stops a policy
+   * report being dismissed because it lacks the elements a takedown notice
+   * needs.
+   *
+   * Add a partial index for the queue: moderation only ever looks at unresolved
+   * rows, and they are a small fraction of the table once it has any history.
+   */
+  CREATE TABLE IF NOT EXISTS content_reports (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    category text NOT NULL,
+    description text NOT NULL,
+    details text,
+    reported_series uuid REFERENCES series(id),
+    reported_chapter uuid REFERENCES chapters(id),
+    reported_comment uuid REFERENCES comments(id),
+    reporter_email text,
+    reporter_account uuid REFERENCES users(id),
+    status text NOT NULL DEFAULT 'pending',
+    admin_notes text,
+    resolved_at timestamptz,
+    resolved_by uuid REFERENCES users(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_reports_status ON content_reports (status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_series ON content_reports (reported_series);
+  CREATE INDEX IF NOT EXISTS idx_reports_chapter ON content_reports (reported_chapter);
+
+  -- Full-text search vector over the three fields a reader would search by.
   -- Generated and stored: no application code updates it, and adding it to a
   -- populated table computes it for the existing rows.
   ALTER TABLE series
