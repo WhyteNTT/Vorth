@@ -400,13 +400,16 @@ the CI job reports an error, because a check that cannot fail proves nothing.
 ## 9. Known limitations / what's next
 
 - **No payment/monetization** — out of scope for this pass.
-- **No dedicated "report content" endpoint** for non-copyright
   Content Policy violations — only DMCA has a formal intake right now.
 - **No DMCA counter-notice flow** — accepted takedowns are final in
   the current implementation; a real platform typically needs to
   support counter-notices with the statutory waiting period.
-- **Search is `ILIKE`** over title + author + synopsis. No tsvector ranking
-  or fuzzy matching yet.
+- **Search** is an indexed tsvector over title, author, artist and synopsis,
+  with stemming, weighted relevance ranking and a GIN index. A substring
+  second pass runs when the indexed pass finds nothing, so partial words
+  still match without a sequential scan on the common path. `english` is a
+  single dictionary: proper stemming per language is not supported, which is
+  a deliberate simplification rather than an oversight.
 - **Rate limiting** works, but the default `memory` store is per-process. Set
   `RATE_LIMIT_STORE=postgres` when running more than one instance.
 - **`aggregate()`** supports `$match`, `$group` (`$sum`/`$avg`/`$min`/`$max`/
@@ -417,7 +420,12 @@ the CI job reports an error, because a check that cannot fail proves nothing.
   about a column type or a constraint it does not know about.
 - **Uploads default to local disk.** Set `STORAGE_DRIVER=s3` before running
   more than one instance, or files will not survive a redeploy.
-- **Object storage deletion** is not implemented for the `s3` driver — use a
+- **Search does not do fuzzy matching or typo tolerance.** "starlit" will not
+  find "Starlight" unless trigram similarity is added.
+- **Object storage deletion is implemented but not life-cycle management.**
+  `remove()` issues a signed DELETE, so a specific orphan can be removed on
+  demand. A bucket lifecycle rule is still the right answer for objects that
+  are simply abandoned, and you still need one — use a
   bucket lifecycle rule.
 - The legal documents in `/legal` are templates — see the notice at
   the top of this file.
