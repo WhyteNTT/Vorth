@@ -299,6 +299,7 @@ npm run test:live   # executes the generated SQL against a real PostgreSQL
 npm run test:browser # the XSS payloads replayed in a real browser
 npm run test:e2e    # the real server, the real page, a real browser
 npm run test:watch  # re-run on change
+npm run test:coverage # the above, with a line/branch/function report
 ```
 
 | Script | Needs | Covers |
@@ -306,12 +307,28 @@ npm run test:watch  # re-run on change
 | `test` | nothing | unit + HTTP + XSS + session + infrastructure |
 | `test:unit` | nothing | the fast subset, listed by name |
 | `test:http` | nothing | routing order, auth/ownership, validation chains, library shape |
-| `test:browser` | Chromium already installed | the XSS payloads in a real browser's HTML parser |
+| `test:browser` | Chromium already installed | the XSS payloads in a real browser's HTML parser, plus the outage toast |
 | `test:browser:ci` | network access | the same, installing Chromium with its system dependencies first |
 | `test:live` | PostgreSQL | every query against a real database |
 | `test:e2e` | PostgreSQL + Chromium | sign-up, publish, read, save, copyright claims, page weight |
+| `test:coverage` | nothing | `test`, plus line/branch/function coverage of `src/` |
 | `smoke` | nothing | `require()` every module |
 | `lint` | nothing | ESLint |
+
+`--coverage` is forwarded to each spawned `node --test` process rather than to
+`test/run.js` itself: V8 coverage is collected per process, and every test file
+already runs in its own, so a flag on the runner would measure only the runner.
+
+**Read that percentage as a floor, not as the project.** `npm run test:coverage`
+needs no database and no browser, so the live and end-to-end files skip
+themselves and the report covers the unit suite alone — 81%, against 88% with
+`VORTH_LIVE_DB=1` and `VORTH_E2E=1` set. The gap is almost all controllers,
+which is exactly what the skipped suites exist to exercise. The report says which
+suites sat it out, so a low number is never silently mistaken for a real gap.
+
+```bash
+VORTH_LIVE_DB=1 VORTH_E2E=1 DATABASE_URL=postgresql://... npm run test:coverage
+```
 
 What each area covers within those scripts:
 
@@ -331,6 +348,8 @@ What each area covers within those scripts:
 | `views` | view de-duplication |
 | `xss` | escaping rules, plus a guard against reintroducing raw interpolation into `script.js` |
 | `postgres.live` | executes every query against a real PostgreSQL |
+| `postgres.serial` | the schema bootstrap, alone: the only tests that may issue DDL |
+| `frontendOutage` | the offline toast, in a real browser, over a server that 404s `/api` |
 
 The database is replaced by a recording double (`test/helpers/fakePool.js`)
 that captures every statement, so the fast suites assert on the SQL actually
@@ -403,10 +422,20 @@ Two things reduce the exposure:
   able to bring its own schema up, which is why the DDL lives in `connectDB()`
   rather than in a separate migration step.
   **A new test file that asserts boot applies the schema must delete that flag
-  for the duration of the test.** Otherwise `connectDB()` returns before issuing
-  any DDL, and the failure reads as "the production guard broke" rather than "the
-  flag was still set". `postgres.live.test.js`, `columnUpgrade.serial.test.js`
-  and `hostGuard.test.js` all do this.
+  for the duration of the test, and must be named `*.serial.test.js`.**
+  Otherwise `connectDB()` returns before issuing any DDL and the failure reads as
+  "the production guard broke" rather than "the flag was still set"; and if it
+  runs in the parallel pass it puts `CREATE INDEX` beside every other live
+  file's `INSERT`, which deadlocks. `postgres.serial.test.js` and
+  `columnUpgrade.serial.test.js` do both; `hostGuard.test.js` clears the flag
+  against a stub pool that never reaches a server.
+  `test/configDrift.test.js` fails if a file clears the flag and is neither.
+
+`*.serial.test.js` files are run in a second pass, after every parallel file has
+finished, and **one file per invocation** — `node --test` runs every file it is
+handed concurrently, so passing the whole serial list to one run would put two
+destructive files in the same database at the same time, which is the collision
+the suffix exists to prevent.
 
 For a rolling deploy where old and new instances overlap, deploy with
 `VORTH_SKIP_SCHEMA=1` on the second and later instances, or accept a brief window
@@ -416,9 +445,10 @@ them concurrently that is not.
 
 ### Warning: `test:live` refuses to touch a real database
 
-`test:live` executes `DELETE` statements. `DATABASE_URL` in a local `.env` is
-very often a **real, remote, production database**, so the suite is gated by
-`test/helpers/liveGuard.js` and will not run unless **both** hold:
+`test:live` executes `DELETE` statements, and its serial pass executes DDL.
+`DATABASE_URL` in a local `.env` is very often a **real, remote, production
+database**, so the suite is gated by `test/helpers/liveGuard.js` and will not run
+unless **both** hold:
 
 1. `VORTH_LIVE_DB=1` is set explicitly, and
 2. the target is local (`localhost`/`127.0.0.1`) **or** its database name

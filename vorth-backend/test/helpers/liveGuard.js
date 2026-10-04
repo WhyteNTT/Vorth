@@ -3,10 +3,10 @@
 /**
  * Guard for tests that touch a real database.
  *
- * `test/postgres.live.test.js` executes destructive statements (DELETE) against
- * whatever DATABASE_URL points at - including the value loaded from a
- * developer's local `.env`, which is very often a real, remote, production
- * database.
+ * `test/postgres.live.test.js` and `test/postgres.serial.test.js` execute
+ * destructive statements (DELETE, TRUNCATE, DDL) against whatever DATABASE_URL
+ * points at - including the value loaded from a developer's local `.env`, which
+ * is very often a real, remote, production database.
  *
  * The classification and the rules live in src/config/hostGuard.js, shared with
  * connectDB(), so the two cannot drift apart. This file is the test-facing

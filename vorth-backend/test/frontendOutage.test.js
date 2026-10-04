@@ -8,6 +8,11 @@
  * provider returns, because that is what happened. The page must tell the
  * reader the server is unreachable rather than quoting the provider's error and
  * its internal request id.
+ *
+ * This needs a browser and no database, so it is gated on Chromium being
+ * launchable and named in `test:browser`. It used to be gated on VORTH_E2E,
+ * which no script that includes this file ever set - so it was skipped by every
+ * run, including CI, guarding a bug that had already shipped once.
  */
 
 const test = require('node:test');
@@ -49,7 +54,7 @@ function serve() {
   });
 }
 
-test('a reader is told the server is unreachable, not what the host said', { skip: !process.env.VORTH_E2E }, async () => {
+test('a reader is told the server is unreachable, not what the host said', async (t) => {
   let chromium;
   try {
     ({ chromium } = require('playwright'));
@@ -60,7 +65,13 @@ test('a reader is told the server is unreachable, not what the host said', { ski
   const { server, port } = await serve();
   let browser;
   try {
-    browser = await chromium.launch();
+    try {
+      browser = await chromium.launch();
+    } catch (err) {
+      // Same courtesy as the XSS browser suite: a bare checkout with no Chromium
+      // skips rather than failing, so `npm test` stays green without a browser.
+      return t.skip(`no headless browser available: ${err.message}`);
+    }
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' });
 

@@ -31,6 +31,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const BACKEND = path.join(__dirname, '..');
 const REPO = path.join(BACKEND, '..');
@@ -287,27 +288,81 @@ test('no tracked asset is large enough to be a problem', () => {
    *
    * 256 KB is comfortably above the largest legitimate asset here (a 73 KB logo)
    * and far below anything a reader pays for on first load.
+   *
+   * Tracked, and only tracked. This used to walk the working tree, which made it
+   * fire on things git was never going to commit: `npm run test:coverage` leaves
+   * raw V8 profiles in `.coverage-tmp/`, several of them over 400 KB, and a local
+   * `uploads/` or `.env` counts too. A budget that fails on build output trains
+   * people to add an OVERRIDE for build output, and then it guards nothing.
    */
   const BUDGET = 256 * 1024;
-  const OVERRIDES = new Set(['package-lock.json']);
+  // Keys are paths as `git ls-files` reports them, relative to the repository
+  // root. They used to be bare filenames, which could never match, so the escape
+  // hatch this failure message offers silently did nothing.
+  const OVERRIDES = new Map([
+    ['vorth-backend/package-lock.json', 'the resolved dependency tree; regenerating it is the fix, not an override'],
+  ]);
+
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  if (listed.error || listed.status !== 0) {
+    /*
+     * Without git the question cannot be answered, so say so instead of quietly
+     * walking the tree - which is the check this one used to do, and the reason
+     * it failed on coverage output.
+     */
+    assert.fail(
+      'could not list tracked files with `git ls-files`, so the asset budget '
+      + `cannot be checked: ${listed.error ? listed.error.message : `exit ${listed.status}`}`
+    );
+  }
 
   const tooBig = [];
-  const walkTracked = (dir, prefix = '') => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name === '.git') continue;
-      const full = path.join(dir, entry.name);
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) { walkTracked(full, rel); continue; }
-      if (OVERRIDES.has(rel)) continue;
-      const size = fs.statSync(full).size;
-      if (size > BUDGET) tooBig.push(`${(size / 1024).toFixed(0)} KB  ${rel}`);
+  for (const rel of listed.stdout.split('\0').filter(Boolean)) {
+    if (OVERRIDES.has(rel)) continue;
+    let size;
+    try {
+      size = fs.statSync(path.join(REPO, rel)).size;
+    } catch (_) {
+      continue; // Tracked but deleted from the working tree; nothing ships.
     }
-  };
-  walkTracked(REPO);
+    if (size > BUDGET) tooBig.push(`${(size / 1024).toFixed(0)} KB  ${rel}`);
+  }
 
-  assert.deepEqual(tooBig.sort(), [],
-    `files over the ${BUDGET / 1024} KB budget. If one is deliberate, add it to the `
-    + 'OVERRIDES list with a reason:\n  ' + tooBig.join('\n  '));
+  assert.deepEqual(
+    tooBig.sort(), [],
+    `tracked files over the ${BUDGET / 1024} KB budget. If one is deliberate, add it to the `
+    + 'OVERRIDES list with a reason (the path as `git ls-files` prints it, relative to '
+    + `the repository root):\n  ${tooBig.join('\n  ')}`
+  );
+});
+
+test('only serial test files may boot the schema against a live database', () => {
+  /*
+   * test/run.js prepares the schema once and sets VORTH_SKIP_SCHEMA so no parallel
+   * test file issues DDL. A file that clears that flag and then connects for real
+   * is putting CREATE INDEX into a pass where every other live file is inserting
+   * rows - and a ShareLock does not wait politely for a RowExclusiveLock. That
+   * deadlocked for real, mid-INSERT, in the live suite.
+   *
+   * hostGuard.test.js clears the flag too, against a stub pool that never reaches
+   * a server, so it is allowed: it asserts what boot *would* issue, and setPool()
+   * is how it proves it.
+   */
+  const clearsSkipFlag = (src) => /delete\s+process\.env\.VORTH_SKIP_SCHEMA/.test(src);
+  const usesStubPool = (src) => /setPool\(/.test(src);
+
+  const offenders = [];
+  for (const file of fs.readdirSync(path.join(BACKEND, 'test'))) {
+    if (!/\.test\.(c|m)?js$/.test(file)) continue;
+    if (/\.serial\.test\.(c|m)?js$/.test(file)) continue;
+    const src = fs.readFileSync(path.join(BACKEND, 'test', file), 'utf8');
+    if (clearsSkipFlag(src) && !usesStubPool(src)) offenders.push(file);
+  }
+
+  assert.deepEqual(offenders.sort(), [],
+    'these files clear VORTH_SKIP_SCHEMA and then connect for real, so they run DDL beside '
+    + 'the other live files - which deadlocks. Rename them to *.serial.test.js so run.js '
+    + `runs them alone, or inject a stub pool:\n  ${offenders.join('\n  ')}`);
 });
 
 test('no third-party media is committed to the frontend', () => {
