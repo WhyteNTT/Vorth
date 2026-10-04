@@ -125,6 +125,39 @@ function applyPredicates(rows, sql, params) {
   return rows.filter((row) => groups.some((eqs) => matches(row, eqs)));
 }
 
+/**
+ * Applies an UPDATE's SET clause to the row it matched, so that a `save()`
+ * followed by a re-read sees the values just written.
+ *
+ * Deliberately narrow: `"col" = $n` and `"col" = $n::type` are applied, along
+ * with a handful of literals. Anything else - COALESCE, CASE, arithmetic - leaves
+ * the column alone, because guessing at an expression's result is how a double
+ * ends up confidently wrong. The alternative is inventing data, which is worse
+ * than admitting the column is beyond reach.
+ */
+function applySet(row, sql, params) {
+  if (!row) return null;
+  const set = (sql.match(/ SET (.*?)(?: WHERE | RETURNING |$)/) || [])[1];
+  if (!set) return { ...row };
+
+  const out = { ...row };
+
+  for (const m of set.matchAll(/"(\w+)"\s*=\s*\$(\d+)(?:::\w+)?/g)) {
+    let value = params[Number(m[2]) - 1];
+    // A JSONB column is sent as its serialised text and comes back parsed, so
+    // the double parses it too. Otherwise a save() that stored `[]` re-read it
+    // as the four-character string "[]", which is a different value.
+    if (typeof value === 'string' && /^[[{]/.test(value)) {
+      try { value = JSON.parse(value); } catch (_) { /* not JSON after all */ }
+    }
+    out[m[1]] = value;
+  }
+  for (const m of set.matchAll(/"(\w+)"\s*=\s*(now\(\)|true|false|null)(?!\s*\()/g)) {
+    out[m[1]] = /^(true|false)$/.test(m[2]) ? m[2] === 'true' : (m[2] === 'null' ? null : new Date());
+  }
+  return out;
+}
+
 function seedRow(table, values = {}) {
   const row = {};
   for (const col of COLUMNS[table]) {
@@ -195,21 +228,35 @@ function createFakePool(opts = {}) {
         // exercised.
         const suppressed = opts.emptyReturning && new RegExp(opts.emptyReturning, 'i').test(sql);
         /*
-         * The row an UPDATE returns has to be the row that was there. Handing back
-         * a blank seedRow instead meant save() wrote its changes and then re-read
-         * an all-null document over the top, so every field came back null
-         * afterwards - a double that quietly destroyed the record it had just been
-         * asked to update, which is how a passing login test was returning a user
-         * with no username.
+         * The row an UPDATE returns has to be the row that was updated. Handing
+         * back a blank seedRow meant save() wrote its changes and then re-read an
+         * all-null document over the top, so every field came back null
+         * afterwards - a double that quietly destroyed the record it had just
+         * been asked to update.
          *
-         * Preferring the canned row keeps a save round-tripping faithfully, which
-         * is what the real statement does. echoRow still wins where a test wants a
-         * specific shape, chiefly the atomic one-shot updates that return a row the
-         * canned data does not describe.
+         * The obvious repair - return the first canned row - is also wrong, and
+         * worse, because it is wrong quietly. An UPDATE whose WHERE clause selects
+         * the second user returns the first one, so save() re-hydrates the
+         * document with somebody else's row: a delete against your own download
+         * list answered with another user's downloads. A test asserting that a
+         * stranger sees nothing would have failed on this, which is how it was
+         * found.
+         *
+         * So the UPDATE's own predicate decides, the same way it does in the
+         * database. Falls back to the first row, then to a blank one, for updates
+         * with no predicate at all.
+         *
+         * echoRow still wins where a test needs a specific shape, chiefly the
+         * atomic one-shot updates that return a row the canned data does not
+         * describe.
          */
+        const matched = entry.verb === 'UPDATE'
+          ? applyPredicates(pool.rows[table] || [], sql, params)[0]
+          : null;
         const echo = opts.echoRow
           ? seedRow(table, opts.echoRow)
-          : ((pool.rows[table] && pool.rows[table][0]) || seedRow(table));
+          : applySet(matched, sql, params) || matched
+            || (pool.rows[table] && pool.rows[table][0]) || seedRow(table);
         return {
           rows: suppressed ? [] : (returning ? [echo] : (opts.deleteReturning ? [echo] : [])),
           rowCount: suppressed ? 0 : (opts.affected === undefined ? 1 : opts.affected),
