@@ -43,28 +43,86 @@ const COLUMNS = {
  * behaves sensibly for filters. Anything more exotic is ignored rather than
  * mis-evaluated.
  *
+ * OR is handled, because the models use it for the one lookup where it matters
+ * most: login finds a user by `username = $1 OR email = $2`. Treating every
+ * predicate as an AND made that match nothing - a row with the right username and
+ * a different email was excluded. That failed loudly, which is lucky; the same
+ * mistake in a filter that *should* match would have gone the other way and hidden
+ * a real bug.
+ *
  * Canned rows are raw database rows (snake_case), which is what the SQL
  * identifiers refer to — the model's camelCasing happens after this point.
  */
+
+/** True if the first paren closes exactly at the last character. */
+function isWrapped(expr) {
+  if (!expr.startsWith('(') || !expr.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < expr.length; i += 1) {
+    if (expr[i] === '(') depth += 1;
+    else if (expr[i] === ')') {
+      depth -= 1;
+      if (depth === 0) return i === expr.length - 1;
+    }
+  }
+  return false;
+}
+
+/**
+ * Splits a WHERE clause on the ORs between its top-level terms.
+ *
+ * The wrapping parentheses come off first. The SQL compiler emits the whole
+ * predicate inside one pair - `(("username" = $1) OR ("email" = $2))` - which
+ * leaves the OR nested one level deep. Splitting on depth alone therefore finds
+ * nothing, every term lands in one group, and the OR silently behaves as an AND.
+ */
+function splitOnOr(where) {
+  let expr = where.trim();
+  while (isWrapped(expr)) expr = expr.slice(1, -1).trim();
+
+  const parts = [];
+  let depth = 0;
+  let current = '';
+  for (let i = 0; i < expr.length; i += 1) {
+    const ch = expr[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    if (depth === 0 && expr.slice(i, i + 4).toUpperCase() === ' OR ') {
+      parts.push(current);
+      current = '';
+      i += 3;
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.filter((p) => p.trim());
+}
+
+/** The equality / ANY predicates the models emit, as [column, operand, op]. */
 function applyPredicates(rows, sql, params) {
   const where = (sql.match(/ WHERE (.*?)(?: ORDER BY | LIMIT |$)/) || [])[1];
   if (!where) return rows;
 
-  const eqs = [];
-  where.replaceAll(/\(?"(\w+)"\)? = \$(\d+)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'eq']));
-  where.replaceAll(/\(?"(\w+)"\)? = ANY \(\$(\d+)\)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'in']));
-  where.replaceAll(/\(?"(\w+)"\)? <> \$(\d+)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'ne']));
+  const groups = splitOnOr(where).map((fragment) => {
+    const eqs = [];
+    fragment.replaceAll(/\(?"(\w+)"\)? = \$(\d+)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'eq']));
+    fragment.replaceAll(/\(?"(\w+)"\)? = ANY \(\$(\d+)\)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'in']));
+    fragment.replaceAll(/\(?"(\w+)"\)? <> \$(\d+)/g, (_, col, n) => eqs.push([col, params[Number(n) - 1], 'ne']));
+    return eqs;
+  });
 
-  let out = rows;
-  for (const [col, operand, op] of eqs) {
-    out = out.filter((r) => {
-      const actual = r[col];
-      if (op === 'in') return Array.isArray(operand) && operand.map(String).includes(String(actual));
-      const eq = String(actual) === String(operand);
-      return op === 'ne' ? !eq : eq;
-    });
-  }
-  return out;
+  const matches = (row, eqs) => eqs.every(([col, operand, op]) => {
+    const actual = row[col];
+    if (op === 'in') return Array.isArray(operand) && operand.map(String).includes(String(actual));
+    const eq = String(actual) === String(operand);
+    return op === 'ne' ? !eq : eq;
+  });
+
+  // One group is the common case and is a plain AND, as before.
+  if (groups.length === 1) return rows.filter((row) => matches(row, groups[0]));
+  // Several groups means a real OR at the top level.
+  return rows.filter((row) => groups.some((eqs) => matches(row, eqs)));
 }
 
 function seedRow(table, values = {}) {
@@ -136,9 +194,24 @@ function createFakePool(opts = {}) {
         // conditional atomic writes (e.g. consuming a one-shot token) are
         // exercised.
         const suppressed = opts.emptyReturning && new RegExp(opts.emptyReturning, 'i').test(sql);
-        const row = seedRow(table, opts.echoRow || {});
+        /*
+         * The row an UPDATE returns has to be the row that was there. Handing back
+         * a blank seedRow instead meant save() wrote its changes and then re-read
+         * an all-null document over the top, so every field came back null
+         * afterwards - a double that quietly destroyed the record it had just been
+         * asked to update, which is how a passing login test was returning a user
+         * with no username.
+         *
+         * Preferring the canned row keeps a save round-tripping faithfully, which
+         * is what the real statement does. echoRow still wins where a test wants a
+         * specific shape, chiefly the atomic one-shot updates that return a row the
+         * canned data does not describe.
+         */
+        const echo = opts.echoRow
+          ? seedRow(table, opts.echoRow)
+          : ((pool.rows[table] && pool.rows[table][0]) || seedRow(table));
         return {
-          rows: suppressed ? [] : (returning ? [row] : (opts.deleteReturning ? [row] : [])),
+          rows: suppressed ? [] : (returning ? [echo] : (opts.deleteReturning ? [echo] : [])),
           rowCount: suppressed ? 0 : (opts.affected === undefined ? 1 : opts.affected),
         };
       }
