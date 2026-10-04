@@ -97,16 +97,18 @@ module.exports = [
   },
 
   {
-    // The outage test runs code inside the page: page.addInitScript and
-    // page.evaluate callbacks are serialised and evaluated in the browser, so
-    // window, document and MutationObserver are real there even though this file
-    // is CommonJS running in Node.
-    files: ['test/frontendOutage.test.js'],
+    // The outage and accessibility tests run code inside the page:
+    // page.addInitScript, page.evaluate and the AUDIT function are serialised and
+    // evaluated in the browser, so window, document and MutationObserver are real
+    // there even though these files are CommonJS running in Node.
+    files: ['test/frontendOutage.test.js', 'test/a11y.test.js'],
     languageOptions: {
       globals: {
         window: 'readonly',
         document: 'readonly',
         MutationObserver: 'readonly',
+        getComputedStyle: 'readonly',
+        CSS: 'readonly',
       },
     },
   },

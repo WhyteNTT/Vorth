@@ -175,7 +175,7 @@
 
     <div class="filter-bar">
       <div class="filter-group">
-        <label>Format</label>
+        <label for="filterType">Format</label>
         <select id="filterType">
           <option value="all">All</option>
           <option value="novel">Novels</option>
@@ -183,11 +183,11 @@
         </select>
       </div>
       <div class="filter-group">
-        <label>Genre</label>
+        <label for="filterGenre">Genre</label>
         <select id="filterGenre"><option value="all">All genres</option></select>
       </div>
       <div class="filter-group">
-        <label>Status</label>
+        <label for="filterStatus">Status</label>
         <select id="filterStatus">
           <option value="all">All</option>
           <option value="Ongoing">Ongoing</option>
@@ -196,7 +196,7 @@
         </select>
       </div>
       <div class="filter-group">
-        <label>Sort</label>
+        <label for="filterSort">Sort</label>
         <select id="filterSort">
           <option value="popular">Most popular</option>
           <option value="rating">Highest rated</option>
@@ -383,7 +383,13 @@
     <!-- ---------- ACCOUNT: password reset & email verification ---------- -->
     <div id="accountPanel" class="auth-wrap hidden">
       <div class="auth-card">
-        <h1 class="glitter-text" data-text="Your account">Your account</h1>
+        <!--
+      An h2, not an h1. "Welcome to Vorth" is this panel's heading, and both were
+      laid out at once, so the profile view opened with two h1s and a reader using
+      a heading outline had no single place to start. h1, h2 and h3 share their
+      typography here, so this changes the outline and nothing about the look.
+    -->
+      <h2 class="glitter-text" data-text="Your account">Your account</h2>
 
         <form id="forgotForm" class="auth-form">
           <label>Email address<input type="email" id="forgotEmail" required placeholder="you@example.com"></label>
@@ -414,7 +420,15 @@
       <div class="profile-head">
         <div class="avatar-ring" id="profileAvatar"></div>
         <div>
-          <h1 id="profileName" class="glitter-text"></h1>
+          <!--
+          An h2, not an h1: the profile name sits inside the account view, which
+          already opens with "Your account" as its h1. Both are laid out at once
+          when signed in, so two h1s were visible at the same time - no main
+          heading for a screen reader to navigate from, and a heading outline that
+          starts twice. h1, h2 and h3 share their typography here, so this changes
+          the document structure and nothing about how it looks.
+        -->
+          <h2 id="profileName" class="glitter-text"></h2>
           <p class="view-sub" id="profileMeta"></p>
         </div>
         <button class="btn btn-ghost sm" id="logoutBtn">Sign out</button>
