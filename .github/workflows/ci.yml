@@ -10,6 +10,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege, declared once for both jobs.
+#
+# Without this the workflow inherits the repository's default GITHUB_TOKEN
+# permissions, which on many repositories is read/write across all scopes. This
+# workflow only ever checks out code and runs tests; it never writes to the
+# repository, opens an issue, or publishes a package, so it should not be able to.
+permissions:
+  contents: read
+
 env:
   # Shared by both jobs so the psql steps and the app agree on the database.
   # PGPASSWORD matters: the service container requires a password over TCP, and
@@ -26,9 +35,9 @@ jobs:
         working-directory: vorth-backend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -83,11 +92,11 @@ jobs:
       # Full history, not the default depth 1: applyLegacySchema.js reads the
       # pre-upgrade schema from a pinned commit, and a shallow clone does not
       # contain it. This job is the only one that needs it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
