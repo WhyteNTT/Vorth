@@ -19,7 +19,7 @@ cd vorth-backend
 npm install
 cp .env.example .env
 # edit .env — at minimum set DATABASE_URL and JWT_SECRET
-npm run dev        # nodemon, auto-restarts on change
+npm run dev        # node --watch, auto-restarts on change
 # or
 npm start          # plain node
 ```
@@ -172,6 +172,59 @@ Anyone can browse and read the catalog without an account. Publishing
 requires sign-in. **Only the account that published a series can add
 chapters to it** — enforced server-side by the `requireSeriesOwner`
 and `requireChapterOwner` middleware, not just hidden in the UI.
+
+### Not every route that takes an id needs an ownership check
+
+This is the mistake worth heading off, so it is spelled out.
+
+Routes fall into two classes, and they want opposite answers.
+
+**Routes whose target is somebody else's row** must load the row, compare it
+to `req.user`, and refuse with 403 or 404. `requireSeriesOwner` and
+`requireChapterOwner` do this, admins excepted.
+
+**Routes scoped to the caller's own row by construction** have nothing to
+compare, because the id in the path is not a reference to another user's
+data — it is a value inside the caller's own JSONB. These are the library
+routes:
+
+| Route | What it touches |
+|---|---|
+| `DELETE /library/:seriesId` | filters `req.user.library` |
+| `DELETE /library/downloads/:chapterId` | filters `req.user.downloads` |
+
+`libraryRoutes.js` applies `protect` to every route, and neither handler ever
+loads the series or chapter named in the path. `DELETE /library/downloads/:id`
+with somebody else's chapter id is therefore a no-op that returns **200** and
+the caller's own unchanged list.
+
+**That 200 is correct. Do not "fix" it into a 403.**
+
+Making these refuse would be a regression, not a repair:
+
+- It breaks idempotency. A client retrying a delete after a dropped
+  connection gets a 404 for something it legitimately removed, and then has
+  to distinguish "gone" from "never yours".
+- The check would have to load the row to compare it, which is the only
+  thing these routes currently avoid doing.
+- It protects nothing. The path id is compared against the caller's own
+  array, so no other user's row is reachable in the first place.
+
+The real hazard on these routes runs the other way, and it is the one worth
+testing for: **writing to the wrong user's row.** A `save()` that persists
+against a stale or shared model instance does not produce a 403 problem at
+all — it silently hands the caller somebody else's downloads. That is a
+correctness bug in the write path, not a missing guard, and no status code
+would reveal it.
+
+So the invariant to preserve when editing these handlers is: *the row
+written is `req.user`'s row, and the response echoes only `req.user`'s
+state.* `test/ownership.http.test.js` pins exactly that, in two lists that
+are deliberately kept apart — `CASES` demands 403/404 from a stranger, and
+`CALLER_SCOPED` demands a sub-400 answer plus an empty, caller-owned
+payload. If you add a route, decide which list it belongs in before writing
+the handler; if you change one of these handlers, that test is what will
+tell you whether you broke something.
 
 ## 5. API reference
 
