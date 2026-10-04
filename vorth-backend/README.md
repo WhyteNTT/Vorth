@@ -351,6 +351,7 @@ npm run test:http   # the real Express app over HTTP
 npm run test:live   # executes the generated SQL against a real PostgreSQL
 npm run test:browser # the XSS payloads replayed in a real browser
 npm run test:e2e    # the real server, the real page, a real browser
+npm run test:shutdown # SIGTERM drains in flight work, closes the pool, exits 0
 npm run test:watch  # re-run on change
 npm run test:coverage # the above, with a line/branch/function report
 ```
@@ -363,6 +364,7 @@ npm run test:coverage # the above, with a line/branch/function report
 | `test:browser` | Chromium already installed | the XSS payloads in a real browser's HTML parser, plus the outage toast |
 | `test:browser:ci` | network access | the same, installing Chromium with its system dependencies first |
 | `test:live` | PostgreSQL | every query against a real database |
+| `test:shutdown` | PostgreSQL + a POSIX signal | that SIGTERM drains, closes the pool and stops the jobs rather than waiting to be killed. Skipped on Windows, which cannot deliver a signal to a child process, and skipped without `VORTH_LIVE_DB=1`, because server.js exits during startup when it cannot reach a database |
 | `test:e2e` | PostgreSQL + Chromium | sign-up, publish, read, save, copyright claims, page weight |
 | `test:coverage` | nothing | `test`, plus line/branch/function coverage of `src/` |
 | `smoke` | nothing | `require()` every module |

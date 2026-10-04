@@ -35,9 +35,9 @@ jobs:
         working-directory: vorth-backend
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -92,11 +92,11 @@ jobs:
       # Full history, not the default depth 1: applyLegacySchema.js reads the
       # pre-upgrade schema from a pinned commit, and a shallow clone does not
       # contain it. This job is the only one that needs it.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -158,6 +158,15 @@ jobs:
           VORTH_LIVE_DB: '1'
         run: npm run test:live
 
+      # Here rather than in the Test + lint job: this boots the real server,
+      # and server.js exits during startup when it cannot reach a database. In a
+      # job with none, the child dies before it listens and the test fails for a
+      # reason that has nothing to do with shutdown.
+      - name: Graceful shutdown on SIGTERM (needs a real listener and a database)
+        env:
+          VORTH_LIVE_DB: '1'
+        run: npm run test:shutdown
+
       # The sweep is operator-run rather than scheduled, which means nothing else
       # would ever execute it. Without this step a typo in the script would only
       # surface at the moment an operator most needs it to work.
@@ -178,7 +187,11 @@ jobs:
           VORTH_E2E: '1'
           MAIL_TRANSPORT: disabled
         run: |
-          npx --yes playwright@1.49.0 install --with-deps chromium
+          # No version here on purpose: the browser build has to match the playwright in
+          # package-lock.json, or the suite looks for a revision that was never
+          # downloaded. This was pinned to an old version and broke the moment
+          # playwright was upgraded for a security fix.
+          npx playwright install --with-deps chromium
           npm run test:e2e
 
       - name: Seed script is idempotent and produces a browsable catalog

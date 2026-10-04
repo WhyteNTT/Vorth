@@ -242,9 +242,18 @@ test('every test file is reachable from some script', () => {
    * in the default run and nobody will notice it is not really running.
    */
   const scripts = JSON.parse(read(BACKEND, 'package.json')).scripts;
-  const named = ['test', 'test:unit', 'test:http', 'test:live', 'test:browser', 'test:e2e']
-    .map((s) => scripts[s] || '')
-    .join(' ');
+  /*
+   * Every script's text, not a list of script names.
+   *
+   * This check used to name the scripts it looked at: test, test:unit, test:http,
+   * test:live, test:browser, test:e2e. That is a list that has to be updated by
+   * hand every time a suite is added, and forgetting is silent - the new suite
+   * exists, `npm test` runs it, and this reports it as unreachable instead of
+   * noticing that nothing else does. It did exactly that to test:shutdown.
+   *
+   * Scanning the values means a new script is covered the moment it is written.
+   */
+  const named = Object.values(scripts).join(' ');
 
   const files = fs.readdirSync(path.join(BACKEND, 'test'))
     .filter((f) => /\.test\.(c|m)?js$/.test(f));

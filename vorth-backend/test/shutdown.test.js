@@ -91,6 +91,22 @@ test('SIGTERM drains in flight work, closes the pool and stops the jobs, then ex
     return t.skip('Windows cannot deliver SIGTERM to a child process; run this on Linux');
   }
 
+  /*
+   * Also needs a database, and this is the same lesson the first CI run taught.
+   *
+   * server.js connects during startup and exits if it cannot. In a job with no
+   * database the child dies before it ever listens, so the test fails on a boot
+   * error that has nothing to do with shutdown - and it fails in 23 seconds,
+   * which looks nothing like a shutdown problem.
+   *
+   * Skipping on the same condition the live suites use keeps this honest in both
+   * directions: `npm test` on a machine with no database stays green, and the CI
+   * step that sets VORTH_LIVE_DB=1 in the postgres job is the one that proves it.
+   */
+  if (process.env.VORTH_LIVE_DB !== '1') {
+    return t.skip('boots the real server, which needs a database; set VORTH_LIVE_DB=1');
+  }
+
   let inFlight = null;
 
   const { code, signal, output } = await runServer({
