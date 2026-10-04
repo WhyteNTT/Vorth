@@ -28,20 +28,71 @@ async function start() {
   });
 }
 
+/**
+ * How long a drain may take before the process gives up waiting.
+ *
+ * `server.close()` waits for in-flight requests and for every keep-alive
+ * connection to close on its own, which is unbounded. Render sends SIGTERM and
+ * then SIGKILLs after a grace period, so an unbounded drain means the platform
+ * kills the process instead - a hard restart that looks identical in the logs to
+ * a crash, and loses whatever the last in-flight request was doing. Better to
+ * finish cleanly and, if something will not finish, say so and exit anyway.
+ */
+const SHUTDOWN_DEADLINE_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+
+/**
+ * Stops accepting work, lets what is in flight finish, then closes the database
+ * pool and the scheduled jobs before exiting.
+ *
+ * Order matters. The listener closes first so no new request arrives; the pool
+ * closes after that so an in-flight request still has a connection to finish on;
+ * the jobs stop last so a sweep that is part-way through is not cut off mid-write.
+ */
+function shutdown(code, reason) {
+  console.log(`[server] ${reason}, shutting down gracefully (deadline ${SHUTDOWN_DEADLINE_MS}ms)`);
+
+  const forceTimer = setTimeout(() => {
+    console.error('[server] Shutdown deadline reached with connections still open; exiting anyway');
+    process.exit(code);
+  }, SHUTDOWN_DEADLINE_MS);
+  // Do not let the deadline itself be the reason the process stays alive.
+  forceTimer.unref();
+
+  const finish = async () => {
+    try {
+      const { stopJobs } = require('./src/jobs/resetViews');
+      stopJobs();
+      await require('./src/config/db').closePool();
+      console.log('[server] Shutdown complete');
+    } catch (err) {
+      console.error('[server] Shutdown step failed:', err.message);
+    }
+    process.exit(code);
+  };
+
+  if (!server) return finish();
+
+  // Node 18.2+: stop keep-alive sockets from holding the drain open. Requests
+  // already being served are unaffected - closeIdleConnections only reaps sockets
+  // that are between requests.
+  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+
+  server.close(finish);
+}
+
 // Fail loudly instead of leaving the process in a half-working state.
 process.on('unhandledRejection', (err) => {
   console.error('[fatal] Unhandled promise rejection:', err);
-  if (server) {
-    server.close(() => process.exit(1));
-  } else {
-    process.exit(1);
-  }
+  shutdown(1, 'Unhandled promise rejection');
 });
 
-process.on('SIGTERM', () => {
-  console.log('[server] SIGTERM received, shutting down gracefully');
-  if (server) server.close(() => process.exit(0));
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] Uncaught exception:', err);
+  shutdown(1, 'Uncaught exception');
 });
+
+process.on('SIGTERM', () => shutdown(0, 'SIGTERM received'));
+process.on('SIGINT', () => shutdown(0, 'SIGINT received'));
 
 start().catch((err) => {
   console.error('[fatal] Startup failed:', err.message);

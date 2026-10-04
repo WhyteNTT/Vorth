@@ -24,29 +24,45 @@ async function resetCounter(key) {
   return rowCount;
 }
 
+/**
+ * The schedules this module registered, so a shutdown can stop them.
+ *
+ * node-cron keeps its timers alive, which keeps the event loop alive. Without
+ * this, a drain that finishes would leave the process running and the deploy
+ * would have to kill it - turning a graceful shutdown into a forceful one.
+ */
+const schedules = [];
+
+/** Stops every registered job. Safe to call when none were registered. */
+function stopJobs() {
+  for (const task of schedules.splice(0)) {
+    try { task.stop(); } catch (_) { /* already stopped */ }
+  }
+}
+
 function registerJobs() {
   // Every day at 00:00 server time — resets the "daily" ranking counter.
-  cron.schedule('0 0 * * *', async () => {
+  schedules.push(cron.schedule('0 0 * * *', async () => {
     try {
       const changed = await resetCounter('daily');
       if (changed) console.log(`[cron] Daily view counters reset (${changed} series)`);
     } catch (err) {
       console.error('[cron] Daily reset failed:', err.message);
     }
-  });
+  }));
 
   // Every Sunday at 00:05 server time — resets the "weekly" ranking counter.
-  cron.schedule('5 0 * * 0', async () => {
+  schedules.push(cron.schedule('5 0 * * 0', async () => {
     try {
       const changed = await resetCounter('weekly');
       if (changed) console.log(`[cron] Weekly view counters reset (${changed} series)`);
     } catch (err) {
       console.error('[cron] Weekly reset failed:', err.message);
     }
-  });
+  }));
 
   // Housekeeping: unreferenced uploads, stale view counters, spent tokens.
-  cron.schedule('*/30 * * * *', async () => {
+  schedules.push(cron.schedule('*/30 * * * *', async () => {
     try {
       const [uploads, views, refresh, tokens] = await Promise.all([
         pruneOrphanUploads(db.pool),
@@ -61,10 +77,11 @@ function registerJobs() {
     } catch (err) {
       console.error('[cron] Housekeeping failed:', err.message);
     }
-  });
+  }));
 
   console.log(`[cron] Jobs registered (storage=${env.storageDriver}, rate-limit=${env.rateLimitStore})`);
 }
 
 module.exports = registerJobs;
 module.exports.resetCounter = resetCounter;
+module.exports.stopJobs = stopJobs;

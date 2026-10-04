@@ -185,6 +185,22 @@ async function applyColumnUpgrades(pool) {
  *
  * Set VORTH_ALLOW_SCHEMA_ON_PRODUCTION=1 to override the last case.
  */
+/**
+ * Closes the connection pool. A no-op when there is nothing to close, so the
+ * unit suite and a failed boot can both call it without caring.
+ */
+async function closePool() {
+  if (!activePool) return;
+  const closing = activePool;
+  activePool = null;
+  try {
+    await closing.end();
+  } catch (_) {
+    // Already closed, or the connection is already gone. Either way there is
+    // nothing left to do, and a shutdown must not fail over this.
+  }
+}
+
 async function connectDB() {
   const verdict = assertSchemaTargetAllowed(env.databaseUrl, process.env);
   if (!verdict.ok) {
@@ -487,6 +503,16 @@ module.exports = {
   getPool,
   setPool,
   connectDB,
+  /**
+   * Closes the pool, so a shutdown does not leave connections for the OS to
+   * reclaim.
+   *
+   * Not cosmetic: Render sends SIGTERM before it recycles an instance, and a
+   * process that exits with the pool still open reports the shutdown as abrupt in
+   * the logs even when every request completed. Safe to call when there is no
+   * pool, which is what happens in the unit suite.
+   */
+  closePool,
   withTransaction,
   // Exported for tests: the upgrade step has to be provable as a no-op on an
   // up-to-date schema, which is the property that keeps boot lock-free.

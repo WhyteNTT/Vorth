@@ -174,23 +174,48 @@ const PATTERNS = [
 
 /* ------------------------------------------------------------------ *
  * Samples that pin each rule to something it should match.
+ *
+ * Assembled from fragments, never written out.
+ *
+ * These exist to prove each rule fires. Written as literals they are, byte for
+ * byte, the shape of a real credential - which is exactly what a hosted
+ * secret-scanning service looks for. It flagged this file and emailed the
+ * repository owner about a Google API key that does not exist, asking for a
+ * rotation that was not needed and could not be performed.
+ *
+ * That is the whole cost: a scanner cannot tell a fixture from a leak, because
+ * from the blob there is no difference. So each value is built at runtime, and
+ * the rule is still proven - the regex runs against the assembled string in
+ * memory. No blob in this repository contains a contiguous credential-shaped
+ * literal, so nothing scans as one.
+ *
+ * Do not "tidy" these back into single strings. A test below fails if this
+ * file's own source text matches any rule, which is what keeps it that way.
  * ------------------------------------------------------------------ */
 
+const T = (...parts) => parts.join('');
+
 const SAMPLES = {
-  'private key block': '-----BEGIN RSA PRIVATE KEY-----\nMIIEow==',
-  'AWS access key id': 'AKIAIOSFODNN7EXAMPLE is the documentation key',
-  'GitHub token': 'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
-  'Slack token': 'xoxb-123456789012-abcdefghijkl',
-  'Stripe live secret key': 'sk_live_0123456789abcdefghij',
-  'Google API key': 'AIzaSyA0123456789abcdefghijklmnopqrstuv',
-  'JSON Web Token with a real signature':
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
-  'connection string with an inline password':
-    'DATABASE_URL=postgresql://vorth:Hunter2RealPassword@db.internal:5432/vorth',
-  'bearer token in a request example':
-    'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrst',
+  'private key block': T('-----BEGIN RSA ', 'PRIVATE KEY-----\n', 'MIIEow=='),
+  'AWS access key id': T('AKIA', 'IOSFODNN7EXAMPLE', ' is the documentation key'),
+  'GitHub token': T('ghp_', '0123456789abcdefghijklmnopqrstuvwxyz'),
+  'Slack token': T('xox', 'b-123456789012-abcdefghijkl'),
+  'Stripe live secret key': T('sk_', 'live_0123456789abcdefghij'),
+  'Google API key': T('AI', 'zaSyA0123456789abcdefghijklmnopqrstuv'),
+  'JSON Web Token with a real signature': T(
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', '.',
+    'eyJzdWIiOiIxMjM0NTY3ODkwIn0', '.',
+    'dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+  ),
+  'connection string with an inline password': T(
+    'DATABASE_URL=postgresql://vorth:', 'Hunter2RealPassword', '@db.internal:5432/vorth',
+  ),
+  'bearer token in a request example': T(
+    'Authorization: Bearer ', 'eyJhbGciOiJIUzI1NiJ9', '.',
+    'eyJzdWIiOiIxIn0', '.', 'abcdefghijklmnopqrst',
+  ),
   'literal assigned to a secret-named variable':
-    "process.env.SESSION_SECRET ||= 'a-real-looking-secret-value';",
+    T("process.env.SESSION_", "SECRET ||= 'a-real-looking-secret-value';"),
 };
 
 /** Every synthetic value above, so the scanner can exempt itself precisely. */
@@ -287,6 +312,60 @@ test('no credential-shaped string is committed', () => {
     + 'ALLOWED with the reason - do not widen the pattern:\n  ' + findings.join('\n  '));
 });
 
+test('this file contains no credential-shaped value of its own', () => {
+  /*
+   * The guard that would have prevented the alert.
+   *
+   * Every sample above is assembled from fragments at runtime precisely so that
+   * this file's own text matches nothing - not this scanner, and not a hosted one
+   * reading the blob. When the samples were written as plain strings, GitHub's
+   * secret scanning flagged this repository and asked the owner to rotate a Google
+   * API key that was never real. Nothing distinguishes a fixture from a leak at
+   * the blob level, so the fixtures have to not look like leaks.
+   *
+   * Scope, stated so nobody widens it by accident. This checks *values*, and skips
+   * two things that look similar but are not credentials:
+   *
+   *   comments - prose that describes a shape, such as `scheme://user:password@`
+   *   the rule patterns themselves - a regex is a description of a credential, not
+   *     one
+   *
+   * A hosted scanner reports values too. Including the descriptions here would
+   * make this fire on its own documentation, and a guard that fires on
+   * documentation is a guard that gets switched off - which is the failure mode
+   * worth avoiding more than the one this was written for.
+   *
+   * ALLOWED is deliberately not consulted here. An exemption exists so a real
+   * credential-shaped string elsewhere can be waved through with a reason; it must
+   * not be able to exempt this file from the check that keeps hosted scanners
+   * quiet.
+   */
+  const raw = fs.readFileSync(__filename, 'utf8');
+
+  // Blank out comments, preserving offsets so reported line numbers stay true.
+  const source = raw
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => ' '.repeat(m.length))
+    .replace(/(^|[^:])\/\/.*$/gm, (m, p1) => p1 + ' '.repeat(m.length - p1.length));
+
+  const lines = source.split('\n');
+  const isPatternLine = (line) => /\bre\s*[:=]\s*\/|\bre\.\s*test|\.includes\(/.test(line);
+
+  const offenders = [];
+  for (const rule of PATTERNS) {
+    const re = new RegExp(rule.re.source, rule.re.flags.includes('g') ? rule.re.flags : `${rule.re.flags}g`);
+    for (const match of source.matchAll(re)) {
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      if (isPatternLine(lines[lineNumber - 1] || '')) continue;
+      offenders.push(`line ${lineNumber}: ${rule.name} - ${match[0].slice(0, 50)}`);
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    'this file now contains a contiguous credential-shaped value, which is what a '
+    + 'hosted secret scanner reports as a leak. Assemble it with T(...) as the '
+    + 'samples above are:\n  ' + offenders.join('\n  '));
+});
+
 test('the scanner would notice a secret if one were committed', () => {
   /*
    * A guard that cannot fail is not a guard. Each rule is fired at a sample that
@@ -370,12 +449,19 @@ test('no file is committed twice under names that differ only in case', () => {
   assert.deepEqual(clashes, [], clashes.join('\n  '));
 });
 
+/*
+ * Also assembled. Same reason as SAMPLES: these are fixture values, and a
+ * fixture that reads as a credential is an incident someone has to disprove.
+ * Splitting them keeps the exemption list readable and the blob quiet, and the
+ * self-guard below covers these too.
+ */
 const ALLOWED_SAMPLES = {
-  'the throwaway secrets the unit and live suites set': "process.env.JWT_SECRET ||= 'test-secret';",
+  'the throwaway secrets the unit and live suites set':
+    T('process.env.JWT_', "SECRET ||= 'test-secret';"),
   'the demo password in scripts/seed.js, which refuses to run in production':
-    "const DEMO_PASSWORD = 'vorthdemo123';",
+    T('const DEMO_', "PASSWORD = 'vorthdemo123';"),
   'the disposable container database used for live and end-to-end runs':
-    'postgresql://vorth:vorth@127.0.0.1:55433/vorth_test',
+    T('postgresql://vorth:', 'vorth', '@127.0.0.1:55433/vorth_test'),
 };
 
 test('every exemption is load-bearing', () => {
@@ -410,17 +496,19 @@ test('a real-looking password is caught even when it says placeholder in it', ()
   const rule = PATTERNS.find((p) => p.name === 'connection string with an inline password');
   const re = new RegExp(rule.re.source, 'gi');
 
-  const sneaky = 'postgresql://vorth:my-placeholder-but-real-9f2a1c@db.internal/vorth';
+  const sneaky = T('postgresql://vorth:', 'my-placeholder-but-real-9f2a1c', '@db.internal/vorth');
   const match = [...sneaky.matchAll(re)][0];
   assert.ok(match, 'the sample did not match the rule at all');
   assert.equal(rule.validate(match), true,
     'a real-looking password containing "placeholder" was waved through');
 
-  // And the shapes that genuinely are documentation stay exempt.
+  // And the shapes that genuinely are documentation stay exempt. Split too, so
+  // this file holds no contiguous "scheme://user:password@" for a hosted scanner
+  // to report.
   for (const doc of [
-    'postgresql://user:password@localhost:5432/db',
-    'postgresql://user:changeme@localhost:5432/db',
-    'postgresql://user:YOUR_PASSWORD@localhost:5432/db',
+    T('postgresql://user:', 'password', '@localhost:5432/db'),
+    T('postgresql://user:', 'changeme', '@localhost:5432/db'),
+    T('postgresql://user:', 'YOUR_PASSWORD', '@localhost:5432/db'),
   ]) {
     const m = [...doc.matchAll(re)][0];
     if (m) assert.equal(rule.validate(m), false, `"${doc}" should be treated as a placeholder`);
