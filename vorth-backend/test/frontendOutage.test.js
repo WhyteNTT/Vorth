@@ -54,7 +54,22 @@ function serve() {
   });
 }
 
-test('a reader is told the server is unreachable, not what the host said', async (t) => {
+/*
+ * Both timeouts below are generous on purpose.
+ *
+ * The waitForSelector budget is the one that bit: this test launches a browser
+ * and waits for a toast, and under `npm run test:coverage` every child process
+ * is instrumented and dumps a V8 profile on exit while the end-to-end suite runs
+ * its own Chromium instances alongside. The 15s default was picked without that
+ * in mind and produced an intermittent timeout whose only symptom was a missing
+ * toast - indistinguishable from the regression this test exists to catch.
+ *
+ * A wait budget here says nothing about the product, so it reflects what the test
+ * actually does rather than pretending to a bound it cannot meet on a loaded
+ * machine. The outer timeout is the matching safety net, so a launch that never
+ * completes fails with a clear message instead of hanging.
+ */
+test('a reader is told the server is unreachable, not what the host said', { timeout: 180000 }, async (t) => {
   let chromium;
   try {
     ({ chromium } = require('playwright'));
@@ -77,7 +92,7 @@ test('a reader is told the server is unreachable, not what the host said', async
 
     // Open the catalogue, which is what triggers the API call on load.
     await page.click('button[data-view="browse"]');
-    await page.waitForSelector('#toast.show', { timeout: 15000 });
+    await page.waitForSelector('#toast.show', { timeout: 90000 });
     const toast = (await page.textContent('#toast')) || '';
 
     assert.match(toast, /not responding/i, `toast read "${toast}"`);
