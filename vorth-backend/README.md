@@ -376,10 +376,16 @@ already runs in its own, so a flag on the runner would measure only the runner.
 
 **Read that percentage as a floor, not as the project.** `npm run test:coverage`
 needs no database and no browser, so the live and end-to-end files skip
-themselves and the report covers the unit suite alone — 81%, against 88% with
-`VORTH_LIVE_DB=1` and `VORTH_E2E=1` set. The gap is almost all controllers,
+themselves and the report covers the unit suite alone. With `VORTH_LIVE_DB=1` and
+`VORTH_E2E=1` set the whole suite reads **94.2% of statements, 84.8% of branches,
+92.1% of functions**. The gap between the two runs is almost all controllers,
 which is exactly what the skipped suites exist to exercise. The report says which
 suites sat it out, so a low number is never silently mistaken for a real gap.
+
+The weakest remaining area is `src/jobs` (39%): the cron callbacks. They only run
+on a schedule, so the counter-notice sweep is exercised by `dmca:sweep-lapsed`
+rather than by the test suite, and the view-counter resets are not exercised at
+all outside a real clock tick. That is a known gap, not an oversight.
 
 ```bash
 VORTH_LIVE_DB=1 VORTH_E2E=1 DATABASE_URL=postgresql://... npm run test:coverage
@@ -554,6 +560,25 @@ Two details worth knowing, because both were bugs first:
 CI runs the whole sequence against a real PostgreSQL, including the failing
 step in the middle: if `db:verify-schema` passes on a pre-upgrade database,
 the CI job reports an error, because a check that cannot fail proves nothing.
+### Writing a test fixture that looks like a credential
+
+If you add a test for a secret-detection rule, **do not write the sample secret
+out as a literal string.** Assembled at runtime from fragments instead:
+
+```js
+const T = (...parts) => parts.join('');
+
+// Assembled, not literal: a contiguous credential-shaped literal in a blob is
+// indistinguishable from a real one, and hosted secret scanning will report it.
+'Google API key': T('AI', 'zaSyA0123456789abcdefghijklmnopqrstuv'),
+```
+
+This is not hypothetical. Writing these out as plain strings caused GitHub's
+secret scanning to flag this repository and ask the owner to rotate a Google API
+key that never existed. The rule still matches — the regex runs against the
+assembled string — and `test/secrets.test.js` asserts that this file contains no
+credential-shaped value of its own, so it cannot quietly come back.
+
 ## 9. Known limitations / what's next
 
 - **No payment/monetization** — out of scope for this pass.
@@ -579,7 +604,10 @@ the CI job reports an error, because a check that cannot fail proves nothing.
   it only puts back content still removed because of *that* notice, so a moderator
   removal, a Content Policy report or a court order is never undone. The sweep
   reports what it declined to restore and why, because a sweep that restored
-  nothing must not be mistakable for one with nothing to do.
+  nothing must not be mistakable for one with nothing to do. The sweep is
+  batched: it takes at most `SWEEP_BATCH` (200) notices per pass and processes
+  each independently, so a large backlog clears over several runs and a partly
+  failing batch still advances.
 
   Before relying on any of it in production, have counsel review the process and
   register a DMCA designated agent with the U.S. Copyright Office. Public
@@ -605,8 +633,16 @@ the CI job reports an error, because a check that cannot fail proves nothing.
   the whole match. Accumulators are `$sum`, `$avg`, `$min`, `$max` and
   `{$sum: 1}`. Anything else throws rather than returning quietly wrong numbers.
 - **The schema check is a floor, not a ceiling.** `db:verify-schema` asserts
-  13 tables, 4 columns, 9 UNIQUE constraints and 25 indexes. It cannot tell you
+  13 tables, 4 columns, 9 UNIQUE constraints and 27 indexes. It cannot tell you
   about a column type or a constraint it does not know about.
+- **List endpoints are capped, not paginated.** The moderation queues, the comment
+  list for a series and the chapter list returned with a series have a ceiling
+  (200 by default, 500 maximum, and `?limit=` is clamped to that maximum rather
+  than trusted). They return the newest rows and no total count, so a client
+  cannot tell "that is all of them" from "that is the first page" — they can tell
+  it is a page. That is a deliberate bound against an unbounded read on a table
+  that only grows, not a pagination contract; real pagination would need a cursor
+  and a count, and nothing consumes those today.
 - **Uploads default to local disk.** Set `STORAGE_DRIVER=s3` before running
   more than one instance, or files will not survive a redeploy.
 - **Search does not do fuzzy matching or typo tolerance.** "starlit" will not
