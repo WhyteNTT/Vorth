@@ -8,3 +8,8 @@ npm-debug.log*
 coverage/
 .coverage-tmp/
 dist/
+# Scratch output from redirecting a long test run to a file. These get committed
+# by accident because they are named like a normal file and git add -A picks
+# them up; *.txt catches the ones a redirect invents.
+*.txt
+!package-lock.txt
