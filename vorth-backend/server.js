@@ -52,7 +52,13 @@ function shutdown(code, reason) {
   console.log(`[server] ${reason}, shutting down gracefully (deadline ${SHUTDOWN_DEADLINE_MS}ms)`);
 
   const forceTimer = setTimeout(() => {
-    console.error('[server] Shutdown deadline reached with connections still open; exiting anyway');
+    // Cut the sockets first. process.exit() alone leaves the kernel to clean up,
+    // which is the forceful shutdown this whole path exists to avoid doing
+    // quietly; closing them first at least gets the server's own bookkeeping in
+    // order before the process goes.
+    console.error('[server] Shutdown deadline reached with connections still open; '
+      + 'closing them and exiting');
+    if (server && typeof server.closeAllConnections === 'function') server.closeAllConnections();
     process.exit(code);
   }, SHUTDOWN_DEADLINE_MS);
   // Do not let the deadline itself be the reason the process stays alive.
@@ -72,12 +78,33 @@ function shutdown(code, reason) {
 
   if (!server) return finish();
 
-  // Node 18.2+: stop keep-alive sockets from holding the drain open. Requests
-  // already being served are unaffected - closeIdleConnections only reaps sockets
-  // that are between requests.
-  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
-
   server.close(finish);
+
+  /*
+   * Reap idle sockets as they appear.
+   *
+   * `server.close()` waits for every connection to go away, and a keep-alive
+   * connection does not go away just because the response was sent - it sits
+   * there waiting for the next request. Calling closeIdleConnections() once, up
+   * front, does not help: a socket that is mid-request when the drain starts is
+   * not idle yet, so it is skipped, and by the time it is idle nothing is left
+   * to reap it. The drain then waits out the whole deadline and gives up.
+   *
+   * That is what happened here, caught by the shutdown test on Linux: the test's
+   * own request to /api/health was in flight when SIGTERM arrived, and the
+   * process logged "Shutdown deadline reached" instead of "Shutdown complete".
+   *
+   * So this polls until the server is actually closed. It is cheap - a timer that
+   * fires a few times over a drain measured in milliseconds - and it means a
+   * normal shutdown finishes on its own rather than on the backstop.
+   */
+  const reaper = setInterval(() => {
+    if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+  }, 50);
+
+  const stopReaping = () => clearInterval(reaper);
+  reaper.unref();
+  process.once('beforeExit', stopReaping);
 }
 
 // Fail loudly instead of leaving the process in a half-working state.
