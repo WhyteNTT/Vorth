@@ -172,6 +172,34 @@ const PATTERNS = [
   },
 ];
 
+/* ------------------------------------------------------------------ *
+ * Samples that pin each rule to something it should match.
+ * ------------------------------------------------------------------ */
+
+const SAMPLES = {
+  'private key block': '-----BEGIN RSA PRIVATE KEY-----\nMIIEow==',
+  'AWS access key id': 'AKIAIOSFODNN7EXAMPLE is the documentation key',
+  'GitHub token': 'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
+  'Slack token': 'xoxb-123456789012-abcdefghijkl',
+  'Stripe live secret key': 'sk_live_0123456789abcdefghij',
+  'Google API key': 'AIzaSyA0123456789abcdefghijklmnopqrstuv',
+  'JSON Web Token with a real signature':
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+  'connection string with an inline password':
+    'DATABASE_URL=postgresql://vorth:Hunter2RealPassword@db.internal:5432/vorth',
+  'bearer token in a request example':
+    'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrst',
+  'literal assigned to a secret-named variable':
+    "process.env.SESSION_SECRET ||= 'a-real-looking-secret-value';",
+};
+
+/** Every synthetic value above, so the scanner can exempt itself precisely. */
+const SYNTHETIC = new Set(Object.values(SAMPLES));
+
+/**
+ * The exemption list is only meaningful if each entry is load-bearing, so each
+ * reason gets the sample that would otherwise match.
+ */
 /**
  * Values that look like credentials and are not.
  *
@@ -180,6 +208,25 @@ const PATTERNS = [
  * of these, it was waved through by a human being who wrote down why.
  */
 const ALLOWED = [
+  {
+    /*
+     * The scanner's own probe strings.
+     *
+     * Exempting the whole file would be the easy way out and would be a hole:
+     * anyone could commit a real credential in secrets.test.js and it would sail
+     * past. So the exemption is by value, not by path - only the exact strings
+     * this file synthesises to prove each rule fires, and nothing else in it.
+     *
+     * That this is needed at all is the point of SAMPLES existing: each value is
+     * matched by its own rule in the test below, so an exemption here cannot hide
+     * a rule that has stopped working.
+     */
+    // Substring, not equality: a rule matches part of its sample. The AWS pattern
+    // takes 20 characters out of a longer line, and the connection-string rule
+    // takes the URL out of `DATABASE_URL=...`.
+    test: (text) => [...SYNTHETIC].some((sample) => sample.includes(text)),
+    why: "the scanner's own synthetic probe values",
+  },
   {
     // Matches the real text in the suite: process.env.JWT_SECRET ||= 'test-secret'.
     // Without this the rule above fires on every test file, which is exactly the
@@ -222,7 +269,7 @@ test('no credential-shaped string is committed', () => {
       const re = new RegExp(rule.re.source, rule.re.flags.includes('g') ? rule.re.flags : `${rule.re.flags}g`);
       for (const match of text.matchAll(re)) {
         const whole = match[0];
-        if (ALLOWED.some((a) => a.re.test(whole))) continue;
+        if (ALLOWED.some((a) => (a.test ? a.test(whole) : a.re.test(whole)))) continue;
         if (rule.validate && !rule.validate(match)) continue;
 
         // Point at the line, so the finding is actionable rather than a flag.
@@ -260,7 +307,9 @@ test('the scanner would notice a secret if one were committed', () => {
   }
 
   for (const allowance of ALLOWED) {
-    const hit = allowance.re.test(ALLOWED_SAMPLES[allowance.why] || '');
+    // Predicate exemptions are keyed on the scanner's own sample set instead.
+  if (!allowance.re) continue;
+  const hit = allowance.re.test(ALLOWED_SAMPLES[allowance.why] || '');
     if (!hit) continue; // keyed by reason; only check the ones we can sample
     assert.ok(ALLOWED_SAMPLES[allowance.why],
       `${allowance.why} is exempted but has no sample proving the exemption is needed`);
@@ -321,31 +370,6 @@ test('no file is committed twice under names that differ only in case', () => {
   assert.deepEqual(clashes, [], clashes.join('\n  '));
 });
 
-/* ------------------------------------------------------------------ *
- * Samples that pin each rule to something it should match.
- * ------------------------------------------------------------------ */
-
-const SAMPLES = {
-  'private key block': '-----BEGIN RSA PRIVATE KEY-----\nMIIEow==',
-  'AWS access key id': 'AKIAIOSFODNN7EXAMPLE is the documentation key',
-  'GitHub token': 'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
-  'Slack token': 'xoxb-123456789012-abcdefghijkl',
-  'Stripe live secret key': 'sk_live_0123456789abcdefghij',
-  'Google API key': 'AIzaSyA0123456789abcdefghijklmnopqrstuv',
-  'JSON Web Token with a real signature':
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
-  'connection string with an inline password':
-    'DATABASE_URL=postgresql://vorth:Hunter2RealPassword@db.internal:5432/vorth',
-  'bearer token in a request example':
-    'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrst',
-  'literal assigned to a secret-named variable':
-    "process.env.SESSION_SECRET ||= 'a-real-looking-secret-value';",
-};
-
-/**
- * The exemption list is only meaningful if each entry is load-bearing, so each
- * reason gets the sample that would otherwise match.
- */
 const ALLOWED_SAMPLES = {
   'the throwaway secrets the unit and live suites set': "process.env.JWT_SECRET ||= 'test-secret';",
   'the demo password in scripts/seed.js, which refuses to run in production':
@@ -363,6 +387,7 @@ test('every exemption is load-bearing', () => {
    */
   const unnecessary = [];
   for (const allowance of ALLOWED) {
+    if (!allowance.re) continue; // covered by the SYNTHETIC set itself
     const sample = ALLOWED_SAMPLES[allowance.why];
     if (!sample) continue; // keyed by shape rather than by a single sample
     if (!allowance.re.test(sample)) {
