@@ -10,6 +10,19 @@ const DMCAReport = require('../models/DMCAReport');
 const DMCACounterNotice = require('../models/DMCACounterNotice');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
+const { pageSize } = require('../utils/pagination');
+
+/**
+ * How many notices one sweep pass handles.
+ *
+ * 512(g) deadlines are the reason this sweep exists, so it must not silently
+ * fall behind. Batching rather than skipping: each notice is processed
+ * independently, so a batch that partly fails still advances the rest, and the
+ * next cron run picks up where this one stopped. Large enough that a normal
+ * backlog clears in one pass, small enough that memory does not scale with the
+ * queue.
+ */
+const SWEEP_BATCH = 200;
 
 // A DMCA counter-notice under 17 U.S.C. 512(g): the alleged infringer's reply
 // to an accepted takedown.
@@ -348,7 +361,10 @@ const resolveCounterNotice = [
 const listCounterNotices = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
-  const notices = await DMCACounterNotice.find(filter).sort({ createdAt: -1 });
+  // Bounded: the admin counter-notice queue, which grows with the caseload.
+      const notices = await DMCACounterNotice.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(pageSize(req)).exec();
   res.json({ success: true, counterNotices: notices });
 });
 
@@ -384,7 +400,14 @@ async function restoreLapsed(options = {}) {
   };
   if (options.dmcaReport) filter.dmcaReport = options.dmcaReport;
 
-  const due = await DMCACounterNotice.find(filter);
+  // Bounded deliberately, and this is the one that mattered most: a sweep that
+      // reads every notice due for a window into memory has a footprint that
+      // grows with the backlog, on a job cron wakes regardless. Each batch is
+      // processed and released on its own, so the sweep makes progress across
+      // runs instead of trying to hold the whole queue at once.
+      const due = await DMCACounterNotice.find(filter)
+        .limit(SWEEP_BATCH)
+        .exec();
 
   const outcomes = [];
   for (const notice of due) {

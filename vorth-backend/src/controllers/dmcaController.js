@@ -7,6 +7,7 @@ const DMCAReport = require('../models/DMCAReport');
 const Notification = require('../models/Notification');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
+const { pageSize } = require('../utils/pagination');
 
 // POST /api/dmca — public endpoint, no auth required (a rights holder may
 // not have a Vorth account). Captures the statutory elements of a notice.
@@ -85,7 +86,12 @@ const submit = [
 const list = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
-  const reports = await DMCAReport.find(filter).sort({ createdAt: -1 });
+  // Bounded. This queue grows by one row per claim, so an unbounded read means
+    // every claim ever filed comes back in one response - the moderation page
+    // stops loading long before the database starts struggling.
+    const reports = await DMCAReport.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(pageSize(req)).exec();
   res.json({ success: true, reports });
 });
 

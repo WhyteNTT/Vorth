@@ -3,6 +3,16 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
 const Series = require('../models/Series');
+
+/**
+ * Ceiling on the chapter list returned with a series.
+ *
+ * Large enough that a normal serial is never truncated, small enough that a
+ * thousand-chapter work does not turn the detail page into an unbounded public
+ * read. Only metadata is returned here - paragraphs and pages are excluded - so
+ * this is a bound on row count rather than on bytes.
+ */
+const CHAPTER_LIST_MAX = 300;
 const Chapter = require('../models/Chapter');
 const Comment = require('../models/Comment');
 
@@ -124,7 +134,13 @@ const getOne = asyncHandler(async (req, res) => {
   if (!series || series.isRemoved) throw ApiError.notFound('Series not found.');
 
   const [chapters, commentCount] = await Promise.all([
-    Chapter.find({ series: series._id, isRemoved: false }).sort({ num: 1 }).select('-paragraphs -pages'),
+    // Bounded: a long-running serial can have thousands of chapters, and this is
+    // a public read on an unauthenticated page. In chapter order, so the first
+    // page is the beginning of the work rather than a random slice.
+    Chapter.find({ series: series._id, isRemoved: false })
+      .sort({ num: 1 })
+      .limit(CHAPTER_LIST_MAX)
+      .select('-paragraphs -pages'),
     Comment.countDocuments({ series: series._id, isRemoved: false }),
   ]);
 

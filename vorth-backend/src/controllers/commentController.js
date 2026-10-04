@@ -7,6 +7,16 @@ const Series = require('../models/Series');
 const Notification = require('../models/Notification');
 
 /**
+ * Ceiling on one series' comment page.
+ *
+ * Comments are the most-writable table here and this is a public endpoint, so an
+ * unbounded read on a popular series is an expensive request anyone can make.
+ * Newest first, so the bound costs the least: a reader sees the current
+ * conversation, which is what they came for.
+ */
+const COMMENT_PAGE_MAX = 100;
+
+/**
  * Recomputes a series' cached rating from its live comments in a single
  * statement, so the read and the write can never disagree.
  */
@@ -36,8 +46,12 @@ const list = asyncHandler(async (req, res) => {
   // Filter on the route param rather than series._id: the projection above
   // only needs isRemoved, and relying on a populated id here is how this
   // endpoint silently returned an empty list before.
+  // Bounded: this is a public endpoint on the most-writable table in the
+  // database, so the ceiling is what stops one popular series from becoming an
+  // expensive request for anyone. Newest first, so the bound costs least.
   const comments = await Comment.find({ series: req.params.seriesId, isRemoved: false })
     .sort({ createdAt: -1 })
+    .limit(COMMENT_PAGE_MAX)
     .populate('user', 'username displayName')
     .exec();
   res.json({ success: true, comments });

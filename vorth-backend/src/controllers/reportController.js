@@ -7,6 +7,7 @@ const ContentReport = require('../models/ContentReport');
 const Series = require('../models/Series');
 const Chapter = require('../models/Chapter');
 const Comment = require('../models/Comment');
+const { pageSize } = require('../utils/pagination');
 
 /**
  * POST /api/reports — public, no auth required.
@@ -108,7 +109,10 @@ const list = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.category) filter.category = req.query.category;
-  const reports = await ContentReport.find(filter).sort({ createdAt: -1 });
+  // Bounded for the same reason as the DMCA queue: it only grows.
+    const reports = await ContentReport.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(pageSize(req)).exec();
   res.json({ success: true, reports });
 });
 
