@@ -377,15 +377,15 @@ already runs in its own, so a flag on the runner would measure only the runner.
 **Read that percentage as a floor, not as the project.** `npm run test:coverage`
 needs no database and no browser, so the live and end-to-end files skip
 themselves and the report covers the unit suite alone. With `VORTH_LIVE_DB=1` and
-`VORTH_E2E=1` set the whole suite reads **94.2% of statements, 84.8% of branches,
-92.1% of functions**. The gap between the two runs is almost all controllers,
+`VORTH_E2E=1` set the whole suite reads **95.5% of statements, 84.8% of branches,
+94.1% of functions**. The gap between the two runs is almost all controllers,
 which is exactly what the skipped suites exist to exercise. The report says which
 suites sat it out, so a low number is never silently mistaken for a real gap.
 
-The weakest remaining area is `src/jobs` (39%): the cron callbacks. They only run
-on a schedule, so the counter-notice sweep is exercised by `dmca:sweep-lapsed`
-rather than by the test suite, and the view-counter resets are not exercised at
-all outside a real clock tick. That is a known gap, not an oversight.
+The lowest-covered area is `src/jobs` (87%): what remains is the `cron.schedule`
+wiring itself, which has no value in being executed outside a scheduler. The job
+*bodies* are named exports and both test files call them directly, against a
+recording pool and against real PostgreSQL.
 
 ```bash
 VORTH_LIVE_DB=1 VORTH_E2E=1 DATABASE_URL=postgresql://... npm run test:coverage
@@ -632,6 +632,18 @@ credential-shaped value of its own, so it cannot quietly come back.
   JavaScript since it has no single SQL expression), or `null` for one row over
   the whole match. Accumulators are `$sum`, `$avg`, `$min`, `$max` and
   `{$sum: 1}`. Anything else throws rather than returning quietly wrong numbers.
+- **`last_daily_reset` and `last_weekly_reset` cannot record what they claim to.**
+  They exist to say when a view counter was last reset, but both are
+  `NOT NULL DEFAULT now()`, so a newly created series already carries both and a
+  reset simply overwrites one timestamp with another. Nothing reads either column
+  — not the API, not the frontend, not a script — so nothing is currently misled,
+  but nothing would learn anything from them either. Either drop them or let them
+  default to `NULL`; both are schema changes, so neither was made unilaterally.
+  `test/jobs.live.test.js` asserts the present shape, so it fails if it changes.
+- **`resetCounter` interpolates its `key` into SQL** and therefore validates it
+  against a fixed set (`daily`, `weekly`) before issuing anything. Both call sites
+  pass a literal so nothing was ever exposed; the check exists so the next call
+  site cannot rely on that remaining true.
 - **The schema check is a floor, not a ceiling.** `db:verify-schema` asserts
   13 tables, 4 columns, 9 UNIQUE constraints and 27 indexes. It cannot tell you
   about a column type or a constraint it does not know about.
