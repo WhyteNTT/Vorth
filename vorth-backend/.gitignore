@@ -8,8 +8,22 @@ npm-debug.log*
 coverage/
 .coverage-tmp/
 dist/
-# Scratch output from redirecting a long test run to a file. These get committed
-# by accident because they are named like a normal file and git add -A picks
-# them up; *.txt catches the ones a redirect invents.
-*.txt
-!package-lock.txt
+
+# Scratch output from redirecting a long test or coverage run to a file.
+#
+# Named as dotfiles deliberately: these get committed by accident because they
+# look like ordinary files and `git add -A` picks them up, and trying to catch
+# them by extension does not work - the ones actually written here have been .c,
+# .o, .l, .b, .out and .cov.txt, so a rule per extension is a rule per mistake.
+# A dotfile in the backend root is scratch by definition; nothing real is named
+# that way (the two dotfiles that are real are listed explicitly below).
+.c
+.o
+.l
+.b
+.out
+.txt
+.cov.txt
+!.env.example
+!.gitignore
+!package-lock.json
