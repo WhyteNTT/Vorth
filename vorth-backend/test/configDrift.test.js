@@ -265,6 +265,84 @@ test('every test file is reachable from some script', () => {
     + unreachable.join('\n  '));
 });
 
+test('the test runner never invokes a pass with no files in it', () => {
+  /*
+   * Found by this, and it is the worst kind of bug: the runner ran a suite nobody
+   * asked for and reported a failure from it.
+   *
+   * test/run.js partitions the files into a parallel pass, a serial pass, and - as
+   * of the end-to-end scheduling fix - a browser pass. `node --test` with no file
+   * arguments does not run nothing; it runs the entire suite. So whenever a script
+   * names only files that fall outside the parallel pass, `runPass([])` executed
+   * everything.
+   *
+   * `npm run test:e2e` names exactly one file, e2e.test.js, which goes to the
+   * browser pass. The empty parallel pass then ran the whole suite against the same
+   * database, and the command failed on "deadlock detected" from a live test it
+   * should never have started.
+   *
+   * Checked by deriving the partition the same way run.js does and asserting every
+   * script that names test files leaves a non-empty parallel pass. Derived rather
+   * than restated, so it stays true when a script or a suffix changes.
+   */
+  const runner = read(BACKEND, 'test', 'run.js');
+  assert.match(runner, /if \(files\.length\)\s*\{\s*status = runPass\(files\)/,
+    'test/run.js calls runPass(files) unguarded; node --test with no file arguments '
+    + 'runs the whole suite, so an empty parallel pass silently runs everything');
+
+  /*
+   * An empty parallel pass is legitimate when a script names only files that go to a
+   * later pass, which test:e2e does. The guard is on the *invocation*, not on the
+   * partition: run.js must not call runPass with nothing, because node --test reads
+   * an empty file list as "run everything".
+   */
+const scripts = JSON.parse(read(BACKEND, 'package.json')).scripts;
+  const isSerial = /\.serial\.test\.(c|m)?js$/;
+  const isBrowserDriven = /(^|[\\/])e2e\.test\.(c|m)?js$/;
+
+  const deferred = [];
+  for (const [name, body] of Object.entries(scripts)) {
+    if (!body.includes('test/run.js')) continue;
+
+    const named = (body.match(/test\/[\w.]+\.test\.js/g) || [])
+      .map((f) => f.replace(/^test\//, ''));
+    if (!named.length) continue; // a bare `node test/run.js` means everything
+
+    // A script whose entire selection is deferred is fine - run.js skips the
+    // parallel pass. What it must not do is name a file no pass would run, which
+    // would leave that test silently unexecuted.
+    const runsSomewhere = named.some((f) => isSerial.test(f) || isBrowserDriven.test(f));
+    const inParallel = named.filter((f) => !isSerial.test(f) && !isBrowserDriven.test(f));
+    if (!inParallel.length && !runsSomewhere) {
+      deferred.push(name);
+    }
+  }
+
+  assert.deepEqual(deferred, [],
+    'these scripts name test files that no pass runs, so those tests never execute:\n  '
+    + deferred.join('\n  '));
+
+  /*
+   * The pair of facts that makes the guard above necessary, and which together
+   * explain the bug it was written for.
+   *
+   *   1. A script naming only non-parallel files is legitimate - test:e2e does.
+   *   2. So the empty-pass hazard is real and cannot be designed away by
+   *      convention.
+   *
+   * Asserted separately because fixing the guard's assertion instead of the
+   * runner would have produced a green suite that ran the entire database suite
+   * whenever the e2e command was typed. The guard has to keep firing.
+   */
+  const e2eOnly = Object.entries(scripts)
+    .filter(([, body]) => /test\/run\.js\s+test\/e2e\.test\.js\s*$/.test(body.trim()))
+    .map(([name]) => name);
+
+  assert.ok(e2eOnly.length >= 1,
+    'the exact shape that broke - a script naming only the end-to-end file - is gone, so '
+    + 'the empty-pass guard above is no longer being tested by anything real');
+});
+
 /* ------------------------------------------------------------------ *
  * Frontend assets.
  * ------------------------------------------------------------------ */

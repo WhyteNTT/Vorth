@@ -277,42 +277,49 @@ if (process.env.VORTH_LIVE_DB !== '1') {
       `UPDATE series SET views = '{"daily":0,"weekly":0,"alltime":0}'::jsonb
         WHERE id = ANY($1::uuid[])`, [seeded],
     );
-    await db.pool.query('ANALYZE series');
 
     /*
-     * One probe row is deliberately left non-zero, and the assertion below is about
-     * the difference. With every row already zero there is nothing to reset, so a
-     * working clause and a missing one both rewrite zero rows and the test cannot
-     * tell them apart - which is exactly the state this file was in before it, and
-     * it passed while proving nothing about the skip-if-zero clause at all.
+     * Exactly one probe row is left non-zero, and the whole measurement is scoped
+     * to this file's own rows.
+     *
+     * Two earlier versions of this were wrong in ways that only showed up under
+     * load:
+     *
+     * Counting every non-zero row in the table, then explaining, in one
+     * REPEATABLE READ snapshot, to stop another file's rows moving in between. That
+     * fails outright when a concurrent test deletes a row the snapshot needs:
+     * "could not serialize access due to concurrent delete". Coverage runs 50
+     * processes against one database, so that was not an edge case - it failed on
+     * the first full coverage run.
+     *
+     * Scoping both halves to `id = ANY(seeded)` removes the dependency on global
+     * state entirely: no other file's rows are counted, so none can change the
+     * answer, and no transaction is needed to hold a snapshot still.
+     *
+     * One row, not zero, is deliberate. With every row already zero there is
+     * nothing to reset, a working clause and a missing one both rewrite zero rows,
+     * and the test cannot tell them apart - which is exactly the state it was in
+     * before, where it passed while proving nothing about the skip-if-zero clause.
      */
-    const oneNonZero = seeded[0];
     await db.pool.query(
       `UPDATE series SET views = jsonb_set(COALESCE(views, '{}'::jsonb), '{daily}', '7'::jsonb, true)
-        WHERE id = $1`, [oneNonZero],
+        WHERE id = $1`, [seeded[0]],
     );
     await db.pool.query('ANALYZE series');
 
-    const client = await db.pool.connect();
-    let nonZero;
-    let p;
-    try {
-      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
-      const counted = await client.query(
-        `SELECT count(*)::int AS n FROM series WHERE views ->> 'daily' IS DISTINCT FROM '0'`,
-      );
-      nonZero = Number(counted.rows[0].n);
-      p = await plan(
-        `UPDATE series
-            SET views = jsonb_set(COALESCE(views, '{}'::jsonb), '{daily}', '0'::jsonb, true),
-                last_daily_reset = now()
-          WHERE views ->> 'daily' IS DISTINCT FROM '0'`,
-        [], { client },
-      );
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
-    }
+    const SCOPE = 'id = ANY($1::uuid[]) AND views ->> \'daily\' IS DISTINCT FROM \'0\'';
+    const counted = await db.pool.query(
+      `SELECT count(*)::int AS n FROM series WHERE ${SCOPE}`, [seeded],
+    );
+    const nonZero = Number(counted.rows[0].n);
+
+    const p = await plan(
+      `UPDATE series
+          SET views = jsonb_set(COALESCE(views, '{}'::jsonb), '{daily}', '0'::jsonb, true),
+              last_daily_reset = now()
+        WHERE ${SCOPE}`,
+      [seeded],
+    );
 
     // The guard on the guard: if every row were non-zero, a working clause and a
     // missing one would rewrite the same number of rows and this could not tell

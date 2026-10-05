@@ -93,8 +93,33 @@ const all = explicit.length ? explicit : collect(TEST_ROOT).sort();
  * scheduling gives way instead.
  */
 const isSerial = (f) => /\.serial\.test\.(c|m)?js$/.test(f);
-const files = all.filter((f) => !isSerial(f));
+
+/*
+ * The end-to-end file runs in its own pass, after the parallel one.
+ *
+ * It drives a real Chromium against a real server and asserts on what the page
+ * eventually renders, with 15-second selector timeouts. That works when nothing
+ * else is running - five consecutive runs alone, 40-46s each, all green - and
+ * fails roughly half the time during `npm run test:coverage`, where it competes
+ * with sixty-odd sibling processes all under V8 coverage instrumentation. The
+ * symptom is `waitForSelector: Timeout 15000ms exceeded` waiting for a card the
+ * test published itself, minutes after the server answered.
+ *
+ * So this is CPU contention, not a product defect, and raising the timeout would
+ * be treating the symptom: the same test would still be sharing the machine, just
+ * with more patience. `.serial.` already means "cannot share a pass with another
+ * file"; this file needs that for a different reason - not because it alters the
+ * schema, but because it is the only test with a wall-clock deadline - so it
+ * takes the same scheduling answer rather than a new mechanism.
+ *
+ * The cost is real and worth naming: the coverage run takes about 44s longer,
+ * because a test that could have overlapped now cannot.
+ */
+const isBrowserDriven = (f) => /(^|[\\/])e2e\.test\.(c|m)?js$/.test(f);
+
+const files = all.filter((f) => !isSerial(f) && !isBrowserDriven(f));
 const serial = all.filter(isSerial);
+const browserDriven = all.filter(isBrowserDriven);
 
 // Stable, readable order on every platform.
 const display = all.map((f) => path.relative(process.cwd(), f));
@@ -102,6 +127,10 @@ console.log(`Running ${all.length} test file(s):`);
 display.forEach((f) => console.log(`  ${f}`));
 if (serial.length && !explicit.length) {
   console.log(`  (the last ${serial.length} run one at a time, in a second pass)`);
+}
+if (browserDriven.length && !explicit.length) {
+  console.log('  (the end-to-end file runs on its own afterwards; it has a wall-clock '
+    + 'deadline and cannot share the machine)');
 }
 console.log('');
 
@@ -218,10 +247,23 @@ function runPass(passFiles) {
   return result.status === null ? 1 : result.status;
 }
 
-// A separate invocation, not extra arguments to the same one: node --test runs
-// every file it is given concurrently, so appending the serial files to the first
-// pass would change nothing at all.
-let status = runPass(files);
+/*
+ * A separate invocation, not extra arguments to the same one: node --test runs
+ * every file it is given concurrently, so appending the serial files to the first
+ * pass would change nothing at all.
+ *
+ * Guarded against an empty parallel pass, and this is not defensive padding.
+ * `node --test` with no file arguments runs the whole suite, so an empty `files`
+ * array does not run nothing - it runs everything. `npm run test:e2e` names only
+ * e2e.test.js, which now goes to the browser pass, so `files` is empty, and the
+ * first invocation quietly ran the entire suite before the browser pass started.
+ * It reported the e2e command as failing on a deadlock from a live test it had
+ * no business running.
+ */
+let status = 0;
+if (files.length) {
+  status = runPass(files);
+}
 
 /*
  * One serial file per invocation, not all of them in one.
@@ -241,6 +283,22 @@ if (serial.length && !watch) {
   }
 } else if (serial.length) {
   console.log('\n--watch: serial files are not separated, so destructive tests may overlap.');
+}
+
+/*
+ * The browser pass, one file, after everything else has finished.
+ *
+ * Separate from the serial pass and not merged into it: the serial files alter the
+ * schema, and running a browser against a database mid-alteration would trade one
+ * flake for another.
+ */
+if (browserDriven.length && !watch) {
+  console.log(`\n--- browser pass: ${browserDriven.length} file(s), on their own ---`);
+  for (const file of browserDriven) {
+    status = status || runPass([file]);
+  }
+} else if (browserDriven.length) {
+  console.log('\n--watch: the end-to-end file is not separated, so it may time out under load.');
 }
 
 /**

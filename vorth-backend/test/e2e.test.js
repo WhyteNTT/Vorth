@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * End-to-end: the real server, the real page, a real browser.
@@ -90,6 +90,121 @@ async function closeQuietly(fn, ms = 5000) {
   } catch (_) { /* nothing useful to do about a failed close */ }
 }
 
+/**
+ * Everything this suite published, removed by the account that published it.
+ *
+ * Found by this file failing on its own sixth run and then every run after it.
+ * Nothing deleted what the test created, so each run left a series, a chapter,
+ * comments, library rows, progress and reading_progress behind. The catalogue
+ * grew by one every time.
+ *
+ * The failure followed from that, and it looked like a product bug. renderBrowse
+ * asks for `limit: 24` sorted by `views.alltime` descending. Every leftover
+ * series has alltime 0, as does the one the test just published, so past the
+ * twenty-fourth equal-keyed row PostgreSQL's tie-break decides the order and the
+ * new series can simply be absent from page 1. The test then timed out waiting
+ * for a card it had just created, minutes after the API returned 200 for it.
+ *
+ * Confirmed against the database rather than inferred: 24 of 48 rows on page 1.
+ *
+ * So the fixture is cleaned up, keyed on the username because that is the one
+ * thing this test owns and can identify. Deleting by it also removes the library
+ * and progress rows, which reference the series and would otherwise keep it
+ * alive.
+ *
+ * It runs from the after hook, not from the test's own finally. The tests in this
+ * file are not independent: "the card glyph never covers the series title" renders
+ * #trendingRow from the catalogue and waits for a card there, and the card it
+ * finds is the series the first test published. Cleaning up inside the first test
+ * therefore broke the second - correct behaviour, wrong place. The database is
+ * left clean either way; only the timing moves.
+ *
+ * A test that pollutes shared state stops being reproducible against itself long
+ * before it stops being reproducible against the product - which is the more
+ * expensive kind of flake, because the report says the catalogue is broken.
+ */
+async function removeAllTestWork(pool) {
+  if (!pool) return;
+
+  /*
+   * Takes a pool rather than opening one.
+   *
+   * This started as a workaround for a bug that has since been fixed at the
+   * source. The DMCA section used to end the shared pool in its own teardown, and
+   * the require cache meant every statement then threw "Cannot use a pool after
+   * calling end" - swallowed by a .catch(() => {}) on each one, so the cleanup ran
+   * and removed nothing. That is the version that first shipped here.
+   *
+   * The pool is no longer ended mid-test. A private pool is still the right shape,
+   * because teardown that depends on the lifetime of a pool some other section owns
+   * is teardown that will break again the next time that section runs. The after
+   * hook owns one and closes it.
+   */
+  const OURS = "username LIKE 'e2e!_%' ESCAPE '!'";
+
+  const { rows } = await pool.query(`SELECT id FROM users WHERE ${OURS}`);
+  for (const { id } of rows) {
+    /*
+     * Children first, and by what the schema actually has.
+     *
+     * `library` and `progress` are not tables: both are JSONB arrays on users, so
+     * they go with the user and cannot be deleted from separately. Verified
+     * against information_schema rather than assumed - an earlier version listed
+     * them as tables, and each of those deletes failed into its own
+     * .catch(() => {}), leaving the real rows behind while looking clean.
+     *
+     * children -> series -> user, because chapters restrict on series.
+     *
+     * Deliberately not wrapped in .catch(() => {}). Teardown that cannot report
+     * its own failure is teardown that silently does nothing, which is what the
+     * first three versions of this function did - two because they caught
+     * everything, one because the SQL itself was wrong. A failure here now
+     * surfaces, and the assertion below fails loudly if rows remain.
+     */
+    for (const table of ['chapters', 'comments', 'notifications', 'reading_progress']) {
+      /*
+       * Per table, not one loop over four names.
+       *
+       * An earlier version used a single `WHERE series IN (...) OR "user" = $1`
+       * for all four. chapters has no `user` column, so the statement failed with
+       * 'column "user" does not exist' - and because every delete was individually
+       * caught, nothing was removed and nothing said so. It surfaced only when the
+       * after hook counted what was left, which is the argument for that hook.
+       *
+       * Each table gets exactly the predicates it has: chapters has `series` only;
+       * comments, notifications and reading_progress have both.
+       */
+      const predicates = ['series IN (SELECT id FROM series WHERE owner = $1)'];
+      if (table !== 'chapters') predicates.push('"user" = $1');
+      await pool.query(
+        `DELETE FROM ${table} WHERE ${predicates.join(' OR ')}`,
+        [id],
+      );
+    }
+    await pool.query('DELETE FROM series WHERE owner = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+}
+
+/*
+ * The one place the shared pool is closed.
+ *
+ * The DMCA section used to close it in its own teardown, mid-test. That made the
+ * pool's lifetime depend on the order of unrelated code: anything running after
+ * that point - the sign-out step, the outer cleanup - got an ended pool, and every
+ * statement against it threw. Nothing reported the state, so the failure surfaced
+ * as leftover rows and as a run that never exited, neither of which points at the
+ * thing that caused them.
+ *
+ * db.pool is the process-wide pool, not something this test opened, so closing it
+ * is process cleanup and belongs in the after hook with the browser and the
+ * server. One close, at the end, in an order that does not matter.
+ */
+async function closeSharedPool() {
+  const db = require('../src/config/db');
+  await db.pool.end().catch(() => {});
+}
+
 test.after(async () => {
   if (browserPromise) {
     const b = await browserPromise.catch(() => null);
@@ -103,6 +218,75 @@ test.after(async () => {
     }
   }
 
+  /*
+   * The suite must leave the database as it found it.
+   *
+   * This is the assertion that would have caught the teardown that cleaned up
+   * nothing. Two versions of removeTestWork ran to completion, swallowed every
+   * error, deleted zero rows, and the suite stayed green - because nothing looked
+   * afterwards to see whether anything had happened.
+   *
+   * Scoped by ownership, not by title, so it is a check on this file rather than on
+   * whatever else is in the database. One row left behind is a failure, because one
+   * row left behind is how the catalogue grew to 48 and the browse assertion started
+   * failing for a reason that had nothing to do with browse.
+   *
+   * The LIKE pattern uses an explicit ESCAPE character rather than a backslash.
+   * In PostgreSQL a backslash is the default LIKE escape, but it has to survive the
+   * JavaScript string literal as well, and `\_` in a double-quoted literal is not a
+   * recognised escape - so what reaches the database is not reliably what the source
+   * reads as. `!` needs no escaping in JS, which removes the question rather than
+   * answering it.
+   */
+  if (skip) return;
+
+  const { Pool } = require('pg');
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+  try {
+    // Remove first, then count. The count is only meaningful once the removal has
+    // been attempted, and both run on the same pool so the second sees the first's
+    // writes.
+    await removeAllTestWork(pool);
+    await closeSharedPool();
+
+    /*
+     * Scoped by ownership, not by title.
+     *
+     * The first version counted chapters with `WHERE title IN (SELECT title FROM
+     * chapters WHERE title = 'Chapter One')`, which is a tautology - it matches
+     * every chapter this suite creates and any chapter a fixture happened to give
+     * that name, so it would have failed on rows that were never ours. Ownership
+     * is the only thing that identifies these rows: the accounts are the suite's,
+     * and everything else hangs off them.
+     */
+    const { rows: users } = await pool.query(
+      "SELECT count(*)::int AS n FROM users WHERE username LIKE 'e2e!_%' ESCAPE '!'",
+    );
+    const { rows: series } = await pool.query(
+      `SELECT count(*)::int AS n FROM series
+        WHERE owner IN (SELECT id FROM users WHERE username LIKE 'e2e!_%' ESCAPE '!')`,
+    );
+    const { rows: chapters } = await pool.query(
+      `SELECT count(*)::int AS n FROM chapters
+        WHERE series IN (SELECT id FROM series
+                          WHERE owner IN (SELECT id FROM users WHERE username LIKE 'e2e!_%' ESCAPE '!'))`,
+    );
+
+    const left = [
+      `${users[0].n} account(s) matching e2e_*`,
+      `${series[0].n} series owned by them`,
+      `${chapters[0].n} chapter(s) belonging to those series`,
+    ].filter((line) => !line.startsWith('0 '));
+
+    assert.deepEqual(left, [],
+      'this suite left rows behind: ' + left.join(', ')
+      + '.\nEvery run adds one more, and past 24 of them the browse grid drops the '
+      + 'newest series off page 1 - which reads as a broken catalogue and is not one.');
+  } finally {
+    // Closed here, or the pool's sockets keep the event loop alive and the run
+    // hangs after its last assertion instead of exiting.
+    await pool.end().catch(() => {});
+  }
 });
 
 if (!skip) {
@@ -610,9 +794,6 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
       if (report) await DMCAReport.deleteMany({ id: report._id }).catch(() => {});
       await Notification.deleteMany({ series: seriesId }).catch(() => {});
       await User.deleteMany({ id: admin.id }).catch(() => {});
-      // This process opened its own pool for the admin work above; an open pool
-      // keeps the event loop alive and the test run would hang.
-      await db.pool.end().catch(() => {});
     }
 
     /* ---------------------------------------------------------------- *
@@ -646,7 +827,7 @@ test('end to end: sign up, publish, read, save', { skip }, async () => {
 /*
  * Mobile-only controls must actually be mobile-only.
  *
- * Found by screenshotting the landing page at desktop width: a stray × sat in the
+ * Found by screenshotting the landing page at desktop width: a stray � sat in the
  * middle of the nav rail. `.nav-close{ display: none }` was declared before
  * `.icon-btn{ ... display: flex }`, both are a single class, so the later rule
  * won. Nothing about that is visible in the CSS - it only shows up rendered, which
@@ -764,7 +945,7 @@ test('end to end: mobile-only controls are hidden on desktop and shown on mobile
         // Whether it is actually on screen. An element inside a display:none
         // parent still computes its own `display` as flex, so the child's own
         // computed value says nothing about visibility - which is exactly how the
-        // stray × went unnoticed.
+        // stray � went unnoticed.
         let rendered = true;
         for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
           const s = getComputedStyle(node);
