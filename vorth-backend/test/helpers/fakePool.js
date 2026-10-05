@@ -27,7 +27,19 @@ const COLUMNS = {
     'reporter_address', 'copyrighted_work_description', 'original_work_url', 'infringing_series',
     'infringing_chapter', 'infringing_url_description', 'good_faith_statement',
     'accuracy_statement', 'signature', 'status', 'admin_notes', 'resolved_at', 'resolved_by',
-    'created_at', 'updated_at'],
+    'created_at', 'updated_at',
+    // What the takedown actually removed. The counter-notice restore reads these to
+    // decide what it can put back, so a double without them cannot represent an
+    // accepted takedown at all - and `seedRow` throws rather than quietly dropping
+    // the columns, which is how the gap was found.
+    'removal_series', 'removal_chapter', 'removal_at'],
+  // Absent entirely until the counter-notice admin queue needed it. Every column is
+  // taken from the live schema, not from the model, so the two cannot drift.
+  dmca_counter_notices: ['id', 'dmca_report', 'subscriber_name', 'subscriber_email',
+    'subscriber_address', 'identified_material', 'material_location', 'good_faith_statement',
+    'perjury_statement', 'jurisdiction_statement', 'signature', 'status',
+    'response_deadline', 'forwarded_at', 'forwarded_note', 'resolved_at', 'resolved_by',
+    'admin_notes', 'created_at', 'updated_at'],
   content_reports: ['id', 'category', 'description', 'details', 'reported_series',
     'reported_chapter', 'reported_comment', 'reporter_email', 'reporter_account', 'status',
     'admin_notes', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'],

@@ -377,7 +377,7 @@ already runs in its own, so a flag on the runner would measure only the runner.
 **Read that percentage as a floor, not as the project.** `npm run test:coverage`
 needs no database and no browser, so the live and end-to-end files skip
 themselves and the report covers the unit suite alone. With `VORTH_LIVE_DB=1` and
-`VORTH_E2E=1` set the whole suite reads **97.0% of statements, 88.0% of branches,
+`VORTH_E2E=1` set the whole suite reads **97.2% of statements, 88.2% of branches,
 93.7% of functions**. The gap between the two runs is almost all controllers,
 which is exactly what the skipped suites exist to exercise. The report says which
 suites sat it out, so a low number is never silently mistaken for a real gap.
@@ -386,6 +386,14 @@ The lowest-covered area is `src/jobs` (87%): what remains is the `cron.schedule`
 wiring itself, which has no value in being executed outside a scheduler. The job
 *bodies* are named exports and both test files call them directly, against a
 recording pool and against real PostgreSQL.
+
+  Branch coverage sits below statement coverage because most of the gap is error
+  handling — a `catch` that rethrows versus one that degrades. Those branches are
+  covered where they change what a caller sees (the error handler, the health
+  endpoint, the moderation path, the chapter-content split) and left uncovered where
+  they would only log. Which is which matters more than the number, so this is the
+  honest reading rather than a target. Every file is now above 70% branch coverage,
+  and the ones that were not have each been worked through rather than reported.
 
 ```bash
 VORTH_LIVE_DB=1 VORTH_E2E=1 DATABASE_URL=postgresql://... npm run test:coverage

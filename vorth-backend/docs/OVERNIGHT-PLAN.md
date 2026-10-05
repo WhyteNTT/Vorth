@@ -6,7 +6,7 @@ what happened, not what was predicted.
 
 **Start:** `df3da60`, 88.34% statements / 83.08% branches / 89.52% functions.
 **After the eight phases:** `f75dcce`, 94.22% / 84.81% / 92.12%.
-**Now:** **97.0% / 88.0% / 93.7%**, live suite, end-to-end and browser included.
+**Now:** **97.2% / 88.2% / 93.7%**, live suite, end-to-end and browser included.
 
 The second figure is a second pass, and it exists because the honest answer to "is
 everything automatable done?" was *no*. Re-running the four things the phases had
