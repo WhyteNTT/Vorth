@@ -205,8 +205,27 @@ test('every view is reachable by keyboard and names its controls', async (t) => 
         continue;
       }
       await button.click();
-      // Let the view render and any fetch resolve before auditing it.
-      await page.waitForTimeout(250);
+
+      /*
+       * Wait for the view to actually become the visible one, rather than for a
+       * fixed interval.
+       *
+       * A 250ms wait was a guess about how long the page takes. Under load - the
+       * full suite launching this alongside every other browser suite - the click
+       * had not been applied yet, so the audit read the landing page with every
+       * view still laid out: five visible h1s at once and controls from overlays
+       * that are not part of any view. It passed standalone, which is the worst
+       * kind of flake.
+       *
+       * `.active` is the class showView() toggles, so waiting for it waits on the
+       * application rather than on the clock.
+       */
+      await page.waitForSelector(`#view-${view}.active`, { timeout: 15000 });
+      await page.waitForFunction((v) => {
+        const active = [...document.querySelectorAll('.view.active')].map((el) => el.dataset.view);
+        return active.length === 1 && active[0] === v;
+      }, view, { timeout: 15000, polling: 50 });
+
       seenViews.push(view);
 
       const audit = await page.evaluate(AUDIT);
