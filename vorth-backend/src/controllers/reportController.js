@@ -160,21 +160,40 @@ const resolve = [
       await report.save({ client });
 
       if (status === 'actioned') {
-        if (actsOn !== 'none' && actsOn !== 'series' && report.reportedChapter) {
+        /*
+         * Each target acts on exactly the thing it names.
+         *
+         * This used to exclude one target per branch - the chapter branch skipped
+         * 'series', the series branch skipped 'chapter' - which meant a moderator
+         * choosing `target: 'comment'` to remove one comment fell through both and
+         * took down the chapter *and* the series as well. Verified against the
+         * real handler before changing anything:
+         *
+         *   target=comment -> removed chapters, series AND the comment
+         *
+         * `all` means everything the report named, which is what the option's own
+         * documentation says; the old condition also skipped the comment for
+         * `all`, so a report naming a comment and actioned with no target left the
+         * comment up.
+         */
+        const wantsAll = actsOn === 'all';
+        const reason = `Content Policy report upheld (report ${report._id})`;
+
+        if ((wantsAll || actsOn === 'chapter') && report.reportedChapter) {
           await Chapter.findByIdAndUpdate(report.reportedChapter, {
             isRemoved: true,
             // A reason, so a DMCA counter-notice restoring a *different*
             // removal cannot un-hide a Content Policy removal by accident.
-            takedownReason: `Content Policy report upheld (report ${report._id})`,
+            takedownReason: reason,
           }, { client });
         }
-        if (actsOn !== 'none' && actsOn !== 'chapter' && report.reportedSeries) {
+        if ((wantsAll || actsOn === 'series') && report.reportedSeries) {
           await Series.findByIdAndUpdate(report.reportedSeries, {
             isRemoved: true,
-            takedownReason: `Content Policy report upheld (report ${report._id})`,
+            takedownReason: reason,
           }, { client });
         }
-        if (actsOn === 'comment' && report.reportedComment) {
+        if ((wantsAll || actsOn === 'comment') && report.reportedComment) {
           await Comment.findByIdAndUpdate(report.reportedComment, { isRemoved: true }, { client });
         }
       }

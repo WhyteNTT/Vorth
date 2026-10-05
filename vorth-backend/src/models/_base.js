@@ -303,6 +303,12 @@ class BaseModel {
       series: require('./Series'), library: require('./Series'),
       chapter: require('./Chapter'), parent: require('./Comment'),
       infringingSeries: require('./Series'), infringingChapter: require('./Chapter'),
+      // The Content Policy report's own names for the same targets. Without
+      // these, GET /api/reports/:id threw "No populate target registered" and
+      // answered 500 - a moderator opening a single report could not read it.
+      // It went unnoticed because the route had no test.
+      reportedSeries: require('./Series'), reportedChapter: require('./Chapter'),
+      reportedComment: require('./Comment'),
     };
     const Model = map[key] || map[segments[0]];
     if (!Model) throw new Error(`No populate target registered for "${path}"`);
