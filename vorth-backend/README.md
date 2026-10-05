@@ -377,8 +377,8 @@ already runs in its own, so a flag on the runner would measure only the runner.
 **Read that percentage as a floor, not as the project.** `npm run test:coverage`
 needs no database and no browser, so the live and end-to-end files skip
 themselves and the report covers the unit suite alone. With `VORTH_LIVE_DB=1` and
-`VORTH_E2E=1` set the whole suite reads **95.5% of statements, 84.8% of branches,
-94.1% of functions**. The gap between the two runs is almost all controllers,
+`VORTH_E2E=1` set the whole suite reads **96.6% of statements, 86.0% of branches,
+93.7% of functions**. The gap between the two runs is almost all controllers,
 which is exactly what the skipped suites exist to exercise. The report says which
 suites sat it out, so a low number is never silently mistaken for a real gap.
 

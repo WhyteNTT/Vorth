@@ -49,12 +49,28 @@ function runInChild(env, script) {
   // './src/app' resolves against the temp dir and cannot be found.
   const APP = path.join(__dirname, '..', 'src', 'app.js').replace(/\\/g, '/');
 
+  /*
+   * Only what the child cannot inherit.
+   *
+   * execFileSync passes no `env`, so the child already has this process's
+   * environment - including DATABASE_URL, DATABASE_SSL and the signing secret, all
+   * set at module scope above. The runner used to restate them anyway, which put a
+   * second copy of that secret into the file as a bare assignment. The secret
+   * scanner caught it: its allowance covers the `||=` form used module-scope-wide
+   * across the suite, not a plain `=`, so the extra copy was reported as a
+   * committed credential.
+   *
+   * The fix is to delete the line rather than widen the allowance. Widening it
+   * would have let a genuine hardcoded secret through too, which is the one
+   * thing that allowance exists to catch.
+   *
+   * Note the scanner reads this comment as source too, so it is written without
+   * naming the variable and its value side by side - a comment explaining why a
+   * literal was removed is still a literal to a regex.
+   */
   const runner = `
     process.env.NODE_ENV = ${JSON.stringify(env.NODE_ENV)};
     process.env.CLIENT_ORIGINS = ${JSON.stringify(env.CLIENT_ORIGINS ?? '')};
-    process.env.DATABASE_URL = 'postgres://stub/stub';
-    process.env.DATABASE_SSL = 'false';
-    process.env.JWT_SECRET = 'test-secret';
     process.env.RATE_LIMIT_MAX_REQUESTS = '100000';
     process.env.VORTH_APP = ${JSON.stringify(APP)};
 

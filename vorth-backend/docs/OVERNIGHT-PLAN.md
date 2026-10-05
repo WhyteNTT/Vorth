@@ -5,7 +5,14 @@ The plan is kept because the reasoning is useful, but the phase table below is
 what happened, not what was predicted.
 
 **Start:** `df3da60`, 88.34% statements / 83.08% branches / 89.52% functions.
-**End:** `f75dcce`, **94.22% / 84.81% / 92.12%**. Both CI jobs green.
+**After the eight phases:** `f75dcce`, 94.22% / 84.81% / 92.12%.
+**Now:** **96.64% / 85.99% / 93.66%**, live suite, end-to-end and browser included.
+
+The second figure is a second pass, and it exists because the honest answer to "is
+everything automatable done?" was *no*. Re-running the four things the phases had
+promised but skipped found three product bugs and, more usefully, several guards
+that were passing while verifying nothing. Those are recorded under
+[What the second pass found](#what-the-second-pass-found).
 
 ## What each phase actually found
 
@@ -51,6 +58,65 @@ failed once in three runs with the correct message sitting in the element. Raisi
 its timeout to 90s did not help, which killed the contention theory and pointed at
 the real cause. It now records every state the toast passes through, via an
 observer installed before any document exists.
+
+## What the second pass found
+
+Asked whether everything automatable had actually been done, the honest answer was
+no. Four things the phases had promised and skipped:
+
+### Three product bugs
+
+| Area | Finding |
+|---|---|
+| Moderation | `target: 'comment'` removed the chapter **and** series. Each branch excluded only one target, so a moderator removing one comment took down the whole serial. Also, `all` skipped the comment entirely. |
+| `GET /api/reports/:id` | Returned **500, always**. `refFor` maps populate paths through a hand-written table that knew the DMCA controller's field names but not the Content Policy report's `reportedSeries` / `reportedChapter` / `reportedComment`. It had never worked; the route had no test. |
+| Rate limits | Uploads had the **loosest** limit of any expensive route — 60 files × 8 MB per request behind a 300-per-15-minute general limit, which is 144 GB per IP per window onto local disk, with no disk ceiling and no per-user accounting anywhere in the schema. Auth was capped at 20, DMCA at 5. |
+
+### Guards that were passing while verifying nothing
+
+The more useful half. These were found by asking what each check was actually
+looking at, not by reading the assertions:
+
+- The rate-limit audit keyed routes `authRoutes.js:POST /login` and looked them up
+  with `startsWith('authRoutes:')`. Never matches. Every per-route assertion
+  matched zero rows and reported "found 0" as though that were a finding.
+- It derived mount paths from filenames: `uploadRoutes` → `upload`, while the real
+  mount is `uploads`. It was never bound to the upload test that actually broke.
+- The orphan-sweep count used `WHERE title IN (SELECT … WHERE title = …)` — a
+  tautology that matches whatever is there.
+- `uploads.js` captured `UPLOAD_DIR` at require time, so the sweep could not be
+  pointed at a scratch directory. The first attempt at those tests ran against the
+  real uploads directory; they were removed and rewritten rather than trusted.
+
+A guard that watches nothing looks exactly like a guard that passes. Each of these
+now asserts it is attached to something, or asserts the count of things it found.
+
+### The end-to-end suite was failing on itself
+
+It passed five runs, failed on the sixth, then seven of the next seven. Nothing
+deleted what it created, so each run left a series behind. `renderBrowse` asks for
+`limit: 24` sorted by `views.alltime` descending; every leftover ties at 0, so past
+the twenty-fourth row PostgreSQL's tie-break decides the order and the new series
+falls off page 1. Confirmed at the database: 24 of 48 rows.
+
+The cleanup took four attempts and the first three deleted nothing — two because
+every statement was wrapped in `.catch(() => {})`, one because the SQL referenced a
+`user` column on a table that has none. Each looked like it had worked. An after-hook
+assertion now counts what is left and fails if it is non-zero; it is what turned the
+third attempt's silent SQL error into a named failure.
+
+### Also
+
+- **Query plans**, promised in Phase 5 and never run. `EXPLAIN (ANALYZE, BUFFERS)`
+  against real PostgreSQL on the hot paths, seed 4000 rows deep enough that the
+  planner has a reason to prefer an index. Dropping `idx_series_listing` or
+  `idx_series_search` is caught.
+- **The health endpoint's DB-down path**, untested and the branch that decides
+  whether a broken instance stays in rotation.
+- **CORS origin handling** — `app.js` sat at 40% branch, and the uncovered half was
+  the callback that decides whether a browser may read a response.
+- **The orphan-upload sweep**, which is the other half of the upload rate limit and
+  the only thing bounding the upload directory. Five mutations caught, one per guard.
 
 ## Not automatable — still needs a person
 

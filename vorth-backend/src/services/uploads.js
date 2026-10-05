@@ -3,7 +3,18 @@ const path = require('path');
 const storage = require('./storage');
 const env = require('../config/env');
 
-const UPLOAD_DIR = storage.UPLOAD_DIR;
+/*
+ * Read through the storage module at call time, not captured here at require time.
+ *
+ * `const UPLOAD_DIR = storage.UPLOAD_DIR` froze the value when this module was
+ * first loaded, which made the sweep untestable: a test could point storage's
+ * export at a scratch directory and uploads.js would keep reading the real one.
+ * The first attempt at these tests did exactly that, ran against the real uploads/
+ * directory, and passed or failed according to whatever happened to be in there -
+ * which is why they were removed and rewritten rather than trusted.
+ *
+ * The behaviour is identical in production; only the indirection changes.
+ */
 const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -32,7 +43,7 @@ async function pruneOrphanUploads(_client, { minAgeMs = ORPHAN_MIN_AGE_MS, dryRu
 
   let entries;
   try {
-    entries = fs.readdirSync(UPLOAD_DIR);
+    entries = fs.readdirSync(storage.UPLOAD_DIR);
   } catch (_) {
     return 0; // uploads directory not created yet
   }
@@ -40,7 +51,7 @@ async function pruneOrphanUploads(_client, { minAgeMs = ORPHAN_MIN_AGE_MS, dryRu
   const cutoff = Date.now() - minAgeMs;
   for (const name of entries) {
     if (name === '.gitkeep' || referenced.has(name)) continue;
-    const full = path.join(UPLOAD_DIR, name);
+    const full = path.join(storage.UPLOAD_DIR, name);
     let stat;
     try { stat = fs.statSync(full); } catch (_) { continue; }
     if (!stat.isFile() || stat.mtimeMs > cutoff) continue;
@@ -54,4 +65,10 @@ async function pruneOrphanUploads(_client, { minAgeMs = ORPHAN_MIN_AGE_MS, dryRu
   return removed;
 }
 
-module.exports = { pruneOrphanUploads, UPLOAD_DIR, ORPHAN_MIN_AGE_MS };
+module.exports = {
+  pruneOrphanUploads,
+  // A getter, for the same reason the sweep reads it lazily: a captured value
+  // cannot be redirected, which is what made this untestable.
+  get UPLOAD_DIR() { return storage.UPLOAD_DIR; },
+  ORPHAN_MIN_AGE_MS,
+};
