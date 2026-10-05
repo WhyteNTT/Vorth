@@ -4,7 +4,17 @@ dotenv.config();
 const REQUIRED_VARS = ['DATABASE_URL', 'JWT_SECRET'];
 
 function requireEnv() {
-  const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
+  /*
+   * A variable set to whitespace counts as missing.
+   *
+   * `!process.env[key]` treats `'   '` as configured, and a blank field is exactly
+   * what a platform's environment-variable UI and a hand-edited compose file
+   * produce. That value then reaches the driver, which rejects it as a malformed
+   * connection string - so the server boots, and the error names the wrong thing.
+   * The value itself is not trimmed, so a secret with meaningful whitespace is
+   * unaffected; only the emptiness check looks at the trimmed form.
+   */
+  const missing = REQUIRED_VARS.filter((key) => !String(process.env[key] ?? '').trim());
   if (missing.length) {
     console.error(
       `[config] Missing required environment variable(s): ${missing.join(', ')}\n` +
