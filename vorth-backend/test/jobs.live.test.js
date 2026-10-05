@@ -19,6 +19,26 @@
  *   - a row already at zero is not touched, so a quiet day does no work
  */
 
+/*
+ * Environment first, before anything requires config/db.
+ *
+ * config/db validates its environment at require time and exits if DATABASE_URL
+ * or JWT_SECRET is missing. The "Test + lint" CI job deliberately runs with no
+ * .env at all - the repository does not commit one - so a file that requires it
+ * unconditionally dies at load before its own skip logic can run.
+ *
+ * This is the established pattern in the other live files and it was missed here,
+ * so the file passed on every developer machine (a local .env always supplies the
+ * variables) and failed only in CI, which is the one environment that has neither.
+ *
+ * The stubs are inert when the suite is actually enabled, because ||= leaves an
+ * existing value alone.
+ */
+process.env.DATABASE_URL ||= 'postgres://stub/stub';
+process.env.DATABASE_SSL = 'false';
+process.env.JWT_SECRET ||= 'test-secret';
+process.env.NODE_ENV = 'test';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createFakePool } = require('./helpers/fakePool');

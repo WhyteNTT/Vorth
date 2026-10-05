@@ -288,6 +288,47 @@ test('every asset index.html references exists', () => {
     `referenced by the page but not present:\n  ${missing.join('\n  ')}`);
 });
 
+test('every live test sets its environment before requiring the database', () => {
+  /*
+   * config/db validates its environment at require time and *exits* when
+   * DATABASE_URL or JWT_SECRET is missing. A live test that requires it before
+   * setting its own stubs therefore dies at load, before its skip logic can run.
+   *
+   * This was missed in test/jobs.live.test.js and it is invisible on a developer
+   * machine, because a local .env always supplies those variables. The CI job
+   * that runs deliberately with no .env is the only environment that has neither,
+   * so the failure appeared there and nowhere else.
+   *
+   * Asserted statically, because the alternative is "only CI catches this" -
+   * which is how it stayed broken for two commits.
+   */
+  const live = fs.readdirSync(path.join(BACKEND, 'test'))
+    .filter((f) => /\.live\.test\.(c|m)?js$/.test(f));
+
+  assert.ok(live.length > 0, 'no live test files found; the glob probably broke');
+
+  const offenders = [];
+  for (const file of live) {
+    const src = fs.readFileSync(path.join(BACKEND, 'test', file), 'utf8');
+    const stubs = src.indexOf('process.env.DATABASE_URL');
+    const requiresDb = src.search(/require\('\.\.\/src\/(config\/db|models\/)/);
+
+    if (stubs === -1) {
+      offenders.push(`${file}: never sets process.env.DATABASE_URL at all`);
+      continue;
+    }
+    if (requiresDb !== -1 && stubs > requiresDb) {
+      offenders.push(`${file}: requires src/ at line ${src.slice(0, requiresDb).split('\n').length} `
+        + `but does not set its environment until line ${src.slice(0, stubs).split('\n').length}`);
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    'these files load src/config/db before their environment is set, so they die at '
+    + 'require time in any environment without a .env - which is every CI run of the '
+    + 'Test + lint job:\n  ' + offenders.join('\n  '));
+});
+
 test('no tracked asset is large enough to be a problem', () => {
   /*
    * 2.1 MB of scraped mp4 was committed as a background video that turned out to
