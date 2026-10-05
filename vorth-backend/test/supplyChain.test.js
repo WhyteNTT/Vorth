@@ -182,6 +182,37 @@ test('the CI workflow declares least-privilege token permissions', () => {
     + 'access to anything');
 });
 
+test('no script or workflow pins a playwright version', () => {
+  /*
+   * The browser build has to match the playwright that drives it. Hard-coding a
+   * version in a script is how that silently stops being true: playwright was
+   * upgraded for a security fix, the lockfile moved, and `npx playwright@1.49.0
+   * install` kept downloading a browser revision the suite no longer asks for.
+   * Nothing local catches that - the browsers are already present on a developer
+   * machine, so only CI, which installs from scratch every run, sees it.
+   *
+   * So the version is read from the lockfile rather than written anywhere.
+   */
+  const offenders = [];
+
+  for (const [name, command] of Object.entries(pkg.scripts || {})) {
+    if (/playwright@\d/.test(command)) {
+      offenders.push(`package.json script "${name}": ${command}`);
+    }
+  }
+
+  const workflowPath = path.join(BACKEND, '..', '.github', 'workflows', 'ci.yml');
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  for (const m of workflow.matchAll(/playwright@\d[^\s]*/g)) {
+    offenders.push(`ci.yml: ${m[0]}`);
+  }
+
+  assert.deepEqual(offenders, [],
+    'a playwright version is hard-coded, so the browser downloaded will not match '
+    + 'the playwright in package-lock.json once either is upgraded:\n  '
+    + offenders.join('\n  '));
+});
+
 test('the licence exemptions are all still in use', () => {
   // An allowance nothing needs is not a decision, it is a habit.
   const unused = [...ALLOWED_LICENCES].filter((licence) => {

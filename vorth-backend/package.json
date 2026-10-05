@@ -12,7 +12,7 @@
     "test:browser": "node test/run.js test/browser/xss.dom.test.js test/frontendOutage.test.js test/a11y.test.js",
     "test:live": "node test/run.js test/postgres.live.test.js test/aggregate.live.test.js test/counterNotice.live.test.js test/nullFilter.live.test.js test/liveGuard.test.js test/columnUpgrade.serial.test.js test/postgres.serial.test.js test/hostGuard.test.js test/jobs.live.test.js",
     "test:e2e": "node test/run.js test/e2e.test.js",
-    "test:browser:ci": "npx --yes playwright@1.49.0 install --with-deps chromium && VORTH_BROWSER_BRIDGE=./test/browser/run.mjs node test/run.js test/browser/xss.dom.test.js test/frontendOutage.test.js",
+    "test:browser:ci": "npx playwright install --with-deps chromium && VORTH_BROWSER_BRIDGE=./test/browser/run.mjs node test/run.js test/browser/xss.dom.test.js test/frontendOutage.test.js test/a11y.test.js",
     "test:watch": "node test/run.js --watch",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
