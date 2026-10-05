@@ -6,7 +6,7 @@ what happened, not what was predicted.
 
 **Start:** `df3da60`, 88.34% statements / 83.08% branches / 89.52% functions.
 **After the eight phases:** `f75dcce`, 94.22% / 84.81% / 92.12%.
-**Now:** **96.64% / 85.99% / 93.66%**, live suite, end-to-end and browser included.
+**Now:** **96.7% / 87.1% / 93.7%**, live suite, end-to-end and browser included.
 
 The second figure is a second pass, and it exists because the honest answer to "is
 everything automatable done?" was *no*. Re-running the four things the phases had
@@ -91,6 +91,14 @@ looking at, not by reading the assertions:
 A guard that watches nothing looks exactly like a guard that passes. Each of these
 now asserts it is attached to something, or asserts the count of things it found.
 
+And one that was guarding something, redundantly. `chapterController` guards
+`if (title !== undefined)` before assigning the title — removing that guard broke
+nothing, because `save()` only writes changed columns. The property still matters:
+"do not write a field the caller did not send" is currently true only because the
+data layer also enforces it, and if the model ever writes the full document, every
+edit that omits the title would blank it. Asserted against the response rather than
+the SQL, which is what an author would see.
+
 ### The end-to-end suite was failing on itself
 
 It passed five runs, failed on the sixth, then seven of the next seven. Nothing
@@ -117,6 +125,12 @@ third attempt's silent SQL error into a named failure.
   the callback that decides whether a browser may read a response.
 - **The orphan-upload sweep**, which is the other half of the upload rate limit and
   the only thing bounding the upload directory. Five mutations caught, one per guard.
+- **The novel/comic split on chapter content.** `chapterController` was the
+  worst-covered file at 48% branch, and the uncovered branches were the ones deciding
+  whether an edit is legal. The handler has to reason about the chapter *as it would
+  be after the edit*, not about the request body — otherwise a title-only rename of
+  a novel chapter is rejected because no paragraphs were sent. Four mutations
+  caught; one more exposed a guard that was doing nothing (below).
 
 ## Not automatable — still needs a person
 
