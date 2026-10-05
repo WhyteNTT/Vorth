@@ -101,6 +101,28 @@ if (process.env.VORTH_LIVE_DB !== '1') {
   const totalCost = (root) => Number(root['Total Cost']);
   const rowsActually = (root) => Number(root['Actual Rows']);
 
+  /**
+   * Rows a write actually visited.
+   *
+   * For an UPDATE the root node is `ModifyTable`, and its Actual Rows is 0 no
+   * matter how many rows it changed - verified, not assumed:
+   *
+   *   non_zero rows: 1
+   *   ModifyTable  -> Actual Rows: 0
+   *   Seq Scan     -> Actual Rows: 1
+   *
+   * So reading the root would have made the counter test below assert that the
+   * reset visits no rows, which is what a missing WHERE clause would also report.
+   * The number that matters is the scan's output: rows matched and therefore
+   * rewritten.
+   */
+  function rowsVisited(root) {
+    const scans = nodes(root).filter((n) => /Scan$/.test(n['Node Type'] || ''));
+    assert.ok(scans.length > 0,
+      `no scan node in the plan, so there is nothing to count: ${nodeTypes(root).join(' > ')}`);
+    return scans.reduce((total, n) => total + Number(n['Actual Rows']) * Number(n['Actual Loops']), 0);
+  }
+
   test.before(async () => {
     const { rows: u } = await db.pool.query(
       `INSERT INTO users (display_name, username, email, password, agreed_to_terms_at)
@@ -118,6 +140,17 @@ if (process.env.VORTH_LIVE_DB !== '1') {
      * attempt to supply one ("cannot insert a non-DEFAULT value into column
      * search_vector"). That is better anyway - the index test below then runs
      * against a vector the database actually built, not one assembled here.
+     *
+     * The view counters are seeded at zero, and that is load-bearing rather than
+     * incidental. resetCounter issues one UPDATE over the whole series table, and
+     * jobs.live.test.js asserts that the number of rows it touches equals the
+     * number that were non-zero. Seeding `daily: g` put 4000 non-zero rows in the
+     * table, so that test saw 4002 and failed - intermittently, because node --test
+     * runs the live files concurrently and it only loses the race when both files
+     * are mid-flight.
+     *
+     * So probe rows must not perturb a measurement another file is taking. They
+     * start at zero, which is also the state the counter test below wants anyway.
      */
     await db.pool.query(
       `INSERT INTO series (title, slug, type, owner, author, synopsis, views, rights_attested_at)
@@ -125,7 +158,7 @@ if (process.env.VORTH_LIVE_DB !== '1') {
          'Plan Probe ' || g,
          'plan-probe-' || g || '-' || $1,
          'novel', $2::uuid, 'Probe', 'synopsis text here',
-         jsonb_build_object('daily', g, 'weekly', g, 'alltime', g),
+         jsonb_build_object('daily', 0, 'weekly', 0, 'alltime', 0),
          now()
        FROM generate_series(1, $3) g`,
       [`${process.pid.toString(36)}x${Date.now().toString(36)}`, owner, SEED_ROWS],
@@ -246,6 +279,20 @@ if (process.env.VORTH_LIVE_DB !== '1') {
     );
     await db.pool.query('ANALYZE series');
 
+    /*
+     * One probe row is deliberately left non-zero, and the assertion below is about
+     * the difference. With every row already zero there is nothing to reset, so a
+     * working clause and a missing one both rewrite zero rows and the test cannot
+     * tell them apart - which is exactly the state this file was in before it, and
+     * it passed while proving nothing about the skip-if-zero clause at all.
+     */
+    const oneNonZero = seeded[0];
+    await db.pool.query(
+      `UPDATE series SET views = jsonb_set(COALESCE(views, '{}'::jsonb), '{daily}', '7'::jsonb, true)
+        WHERE id = $1`, [oneNonZero],
+    );
+    await db.pool.query('ANALYZE series');
+
     const client = await db.pool.connect();
     let nonZero;
     let p;
@@ -270,11 +317,14 @@ if (process.env.VORTH_LIVE_DB !== '1') {
     // The guard on the guard: if every row were non-zero, a working clause and a
     // missing one would rewrite the same number of rows and this could not tell
     // them apart.
+    assert.ok(nonZero >= 1,
+      'nothing in the table was non-zero, so there was nothing for the clause to skip '
+      + 'and a missing clause would look identical');
     assert.ok(nonZero < SEED_ROWS,
-      `${nonZero} of ${SEED_ROWS} probe rows are non-zero, so this cannot tell a working `
-      + 'clause from a broken one');
-    assert.equal(rowsActually(p), nonZero,
-      `the reset rewrote ${rowsActually(p)} rows but ${nonZero} were non-zero, so the `
+      `${nonZero} of ${SEED_ROWS} probe rows are non-zero; if every row needed rewriting `
+      + 'then a working clause and a missing one would produce the same count');
+    assert.equal(rowsVisited(p), nonZero,
+      `the reset visited ${rowsVisited(p)} rows but ${nonZero} were non-zero, so the `
       + 'skip-if-zero clause is not doing its job');
   });
 

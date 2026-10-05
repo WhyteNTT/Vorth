@@ -34,6 +34,13 @@ module.exports = {
   maxUploadMb: parseInt(process.env.MAX_UPLOAD_MB, 10) || 8,
   rateLimitWindowMinutes: parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 10) || 15,
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 300,
+  // Uploads are the most expensive thing this service accepts. One request can
+  // carry 60 page images of up to MAX_UPLOAD_MB each, so at the general limit of
+  // 300 requests per window a single IP could write 144 GB in 15 minutes - and
+  // with STORAGE_DRIVER=local there is no disk ceiling and no per-user storage
+  // accounting to stop a single account filling it. The other two expensive
+  // classes, auth and DMCA, both had their own limit; this one had the loosest.
+  uploadRateLimitMaxRequests: parseInt(process.env.UPLOAD_RATE_LIMIT_MAX_REQUESTS, 10) || 10,
   authRateLimitMaxRequests: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS, 10) || 20,
   // DMCA intake is public and sends email to a third party, so it gets its own
   // far tighter budget rather than riding on the general limit.

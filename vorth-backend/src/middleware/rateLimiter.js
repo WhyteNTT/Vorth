@@ -80,4 +80,37 @@ const dmcaLimiter = limiterFor({
   },
 });
 
-module.exports = { generalLimiter, authLimiter, loginAttemptLimiter, dmcaLimiter };
+/**
+ * Uploads.
+ *
+ * The only authenticated route class that writes unbounded user-controlled bytes
+ * to disk in a single request: up to 60 images at MAX_UPLOAD_MB each, which is
+ * 480 MB. The general limiter budgets requests, and every other route spends at
+ * most a few hundred bytes of disk per request, so 300 requests per window was
+ * affordable everywhere except here.
+ *
+ * Keyed by IP like the general limiter rather than by account: req.user is not
+ * populated when a middleware on the router runs, so an account key would need the
+ * lookup moved after `protect`. Per-account limiting is the better answer and is
+ * recorded as a known gap in test/rateLimitAudit.test.js, which asserts the key
+ * so the change is made deliberately.
+ *
+ * The floor is 3 per window rather than 1: a chapter is uploaded as many page
+ * images, and someone correcting a mistake or re-uploading after a failed page
+ * should not have to wait out the window.
+ */
+const uploadLimiter = limiterFor({
+  windowMs: env.rateLimitWindowMinutes * 60 * 1000,
+  max: env.uploadRateLimitMaxRequests,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `upload|${req.ip}`,
+  message: {
+    success: false,
+    message: 'Too many uploads. Please wait before trying again.',
+  },
+});
+
+module.exports = {
+  generalLimiter, authLimiter, loginAttemptLimiter, dmcaLimiter, uploadLimiter,
+};

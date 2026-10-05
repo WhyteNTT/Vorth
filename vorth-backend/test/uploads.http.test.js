@@ -18,6 +18,15 @@ process.env.JWT_SECRET ||= 'test-secret';
 process.env.NODE_ENV = 'test';
 process.env.RATE_LIMIT_MAX_REQUESTS = '100000';
 process.env.AUTH_RATE_LIMIT_MAX_REQUESTS = '100000';
+// Uploads have their own, much tighter limit - 10 per window by default - because
+// one request can carry 60 page images. This file makes more upload requests than
+// that in total, so without raising it here the suite starts failing with 429 on
+// a test about image formats, which says nothing about image formats.
+//
+// configDrift.test.js asserts that any test file hitting a rate-limited route
+// raises the limit for that route's limiter, so the next limiter added does not
+// have to be rediscovered this way.
+process.env.UPLOAD_RATE_LIMIT_MAX_REQUESTS = '100000';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

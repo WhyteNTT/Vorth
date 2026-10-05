@@ -12,6 +12,16 @@ const storage = require('../services/storage');
  */
 const ALLOWED_MIME = storage.ALLOWED_MIME;
 
+/**
+ * Page images per request.
+ *
+ * Named rather than inlined so the rate-limit audit can read it instead of
+ * restating it. It used to be a literal `60` with a comment, which meant the
+ * audit's arithmetic about how much a single request can write could not be
+ * checked against the real number - it was checking its own copy.
+ */
+const MAX_FILES_PER_REQUEST = 60;
+
 function fileFilter(req, file, cb) {
   if (!ALLOWED_MIME.has(file.mimetype)) {
     return cb(ApiError.badRequest('Only JPEG, PNG, WEBP, or AVIF images are allowed.'));
@@ -24,7 +34,7 @@ const upload = require('multer')({
   fileFilter,
   limits: {
     fileSize: env.maxUploadMb * 1024 * 1024,
-    files: 60, // generous cap for a full comic chapter's pages in one request
+    files: MAX_FILES_PER_REQUEST, // generous cap for a full comic chapter's pages
   },
 });
 
@@ -36,3 +46,4 @@ function fingerprint(buffer) {
 module.exports = upload;
 module.exports.fingerprint = fingerprint;
 module.exports.ALLOWED_MIME = ALLOWED_MIME;
+module.exports.MAX_FILES_PER_REQUEST = MAX_FILES_PER_REQUEST;
