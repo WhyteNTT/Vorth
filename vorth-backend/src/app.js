@@ -10,6 +10,7 @@ const env = require('./config/env');
 const routes = require('./routes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { generalLimiter } = require('./middleware/rateLimiter');
+const { requestId } = require('./middleware/requestId');
 const ApiError = require('./utils/ApiError');
 
 const app = express();
@@ -55,6 +56,14 @@ app.use(helmet({
     },
   },
 }));
+/*
+ * First, so every later middleware - including the logger and the error handler -
+ * has an id to attach to. Placed before the body parsers deliberately: a request
+ * with a malformed JSON body fails in `express.json()` and goes straight to the
+ * error handler, and that is exactly the kind of 500 whose log line needs to say
+ * which request it was.
+ */
+app.use(requestId);
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
@@ -62,7 +71,20 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
 
 if (env.nodeEnv !== 'test') {
-  app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
+  /*
+   * `:id` is a morgan token this app defines, reading `req.id` set by requestId
+   * above. Declaring it and appending it to the built-in format keeps every
+   * existing field in place - `combined` and `dev` stay exactly what they were -
+   * rather than hand-rolling an equivalent format, which would change every log
+   * line in production for the sake of one field.
+   *
+   * morgan.token is a global registry rather than a per-instance one, so this is
+   * idempotent: re-requiring app.js in a test process redefines the same token to
+   * the same function.
+   */
+  morgan.token('id', (req) => req.id || '-');
+  const base = env.nodeEnv === 'production' ? 'combined' : 'dev';
+  app.use(morgan(`${base} :id`));
 }
 
 // --- CORS ---

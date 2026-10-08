@@ -50,7 +50,18 @@ function errorHandler(err, req, res, next) {
   }
 
   if (statusCode >= 500) {
-    console.error('[error]', err);
+    /*
+     * The id, the request, and the error - in one line.
+     *
+     * Without the id this line is unattributable: with concurrent requests there is
+     * no way to tell which one produced the stack trace. The method and path are
+     * here too, because the id alone only helps if you can already find the request,
+     * and the id is only in the log for requests that got that far.
+     *
+     * `err` last, because Node prints its stack, and it is the part that scrolls
+     * past. The first line is the one anyone reads.
+     */
+    console.error(`[error] req=${req.id || '-'} ${req.method} ${req.originalUrl}`, err);
 
     /*
      * A 5xx message was almost certainly not written for a reader. It comes from
