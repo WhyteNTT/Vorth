@@ -37,6 +37,42 @@ test('the blueprint parses and declares one web service', () => {
   assert.equal(service.type, 'web');
 });
 
+test('the web service runs on the free plan, and says what that costs', () => {
+  /*
+   * Pinned because it is a deliberate choice with a real trade-off, not an
+   * oversight: a free instance spins down after inactivity.
+   *
+   * That is acceptable here only because the frontend is deployed separately and
+   * serves the page instantly - what a reader can notice is a slow first API
+   * call, not a blank page. If someone reverts this to 'starter' the tests should
+   * not merely fail on a string; the comment above `plan` is what tells the next
+   * person why, so assert it is still there.
+   */
+  assert.equal(service.plan, 'free',
+    'the plan changed; if this is deliberate, update this test and the comment together');
+  // Sliced from the start of the service block, not from `plan:` - the explanation
+  // is written *above* the key, so slicing at the key would miss it.
+  const planComment = raw.slice(raw.indexOf('- type: web'), raw.indexOf('rootDir:'));
+  assert.match(planComment, /spins down|sleep|wake/i,
+    'the plan comment no longer explains the trade-off, which is the only reason this is safe');
+});
+
+test('the database is on a plan that does not expire', () => {
+  /*
+   * Render expires a free Postgres after 30 days. That is fine for a trial and
+   * unacceptable for reader accounts, DMCA records and upload metadata, so the
+   * database deliberately stays on a paid plan even though the web service does
+   * not. Guarding it separately because the two decisions look identical and
+   * are not.
+   */
+  const db = (doc.databases || [])[0];
+  assert.ok(db, 'no database declared');
+  assert.notEqual(db.plan, 'free',
+    'a free Postgres is deleted after 30 days, taking every account and DMCA record with it');
+  assert.match(raw, /expires? a free Postgres|expiry/i,
+    'the 30-day expiry is not documented where an operator would read it');
+});
+
 test('the build targets the backend and installs production dependencies only', () => {
   assert.equal(service.rootDir, 'vorth-backend',
     'without rootDir the build runs in the monorepo root and finds no package.json');

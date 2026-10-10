@@ -26,9 +26,16 @@ services:
   - type: web
     name: vorth-api
     runtime: node
-    # 'starter' is a paid plan. 'free' spins down after inactivity, which is
-    # unsuitable for a public site but fine to try the deployment.
-    plan: starter
+    # 'free' costs nothing and is the right choice here, because the frontend is
+    # deployed separately (Vercel) and serves the page instantly. A free web
+    # service spins down after ~15 minutes of inactivity, so what a reader can
+    # notice is the *first API call* after an idle period taking up to ~30s while
+    # the instance wakes - not a slow or blank page. Once loaded, the SPA keeps
+    # working because the access token lives in memory.
+    #
+    # Raise this to 'starter' ($7/mo) when that first-request delay stops being
+    # acceptable. Nothing in the app needs changing to do so.
+    plan: free
     region: frankfurt
 
     # The repo is a monorepo; the app lives in vorth-backend/.
@@ -166,6 +173,15 @@ databases:
   # there is no separate migration step to keep in step. The change is purely
   # additive - new tables and one new column - so deploying over an existing
   # database upgrades it in place.
+  #
+  # 'free' here is not free forever: Render expires a free Postgres after 30
+  # days, and you then have to keep paying for the data or lose it. That makes
+  # 'free' reasonable for a trial and a bad idea for content you care about -
+  # reader accounts, uploads metadata, DMCA records. 'basic-256mb' is $7/month
+  # and does not expire.
+  #
+  # This is the one place a free tier costs something real. Everything else in
+  # this blueprint can run on 'free' indefinitely.
   - name: vorth-db
     plan: basic-256mb
     region: frankfurt
