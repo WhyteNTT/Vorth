@@ -3,6 +3,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const throwIfInvalid = require('../utils/validate');
 const generateToken = require('../utils/generateToken');
+const { refreshSameSite, refreshSecure } = require('../utils/cookiePolicy');
 const env = require('../config/env');
 const User = require('../models/User');
 const RefreshToken = require('../models/RefreshToken');
@@ -12,23 +13,43 @@ const { sendVerificationAfterSignup } = require('./accountController');
 /**
  * Sets the refresh cookie.
  *
- * SameSite=lax is deliberate: the token is only ever sent on top-level
+ * SameSite=lax is the default: the token is only ever sent on top-level
  * navigation, not on cross-site subrequests, so a CSRF cannot ride on it.
+ *
+ * It becomes 'none' only when a genuinely foreign client origin is configured,
+ * which means the frontend is served from a different site than this API (Vercel
+ * in front of Render, say). Lax cookies are not attached to cross-site
+ * fetch/XHR at all, so leaving it at 'lax' there breaks refresh - late and
+ * quietly, once the access token expires. The reasoning, and the CSRF cost of
+ * relaxing it, are in utils/cookiePolicy.js.
+ *
  * `path` is scoped to the auth routes so it is not attached to every request.
  */
 function setRefreshCookie(res, token, expiresAt) {
   if (!env.refreshCookieEnabled) return;
   res.cookie(env.refreshCookieName, token, {
     httpOnly: true,
-    secure: env.secureCookies,
-    sameSite: 'lax',
+    secure: refreshSecure(env),
+    sameSite: refreshSameSite(env),
     path: '/api/auth',
     expires: expiresAt,
   });
 }
 
+/**
+ * Clears the refresh cookie.
+ *
+ * The attributes must match the ones it was set with, or the browser keeps the
+ * original: same name, same path, and the same sameSite/secure policy. Clearing
+ * with different attributes is how "logout works" and "logout does nothing" get
+ * confused with each other.
+ */
 function clearRefreshCookie(res) {
-  res.clearCookie(env.refreshCookieName, { path: '/api/auth' });
+  res.clearCookie(env.refreshCookieName, {
+    path: '/api/auth',
+    sameSite: refreshSameSite(env),
+    secure: refreshSecure(env),
+  });
 }
 
 /** Returns a fresh access token (and refresh token) for a live session. */
