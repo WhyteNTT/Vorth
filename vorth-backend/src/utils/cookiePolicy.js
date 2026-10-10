@@ -75,7 +75,9 @@ function needsCrossSiteCookie(clientOrigins, publicUrl) {
   return (Array.isArray(clientOrigins) ? clientOrigins : []).some((origin) => {
     const host = hostOf(origin);
     if (!host || isLoopback(host)) return false;
-    return host !== ownHost;
+    // Stripped on both sides: a browser does not treat example.com and
+    // www.example.com as different sites, so neither should we.
+    return host.replace(/^www\./, '') !== ownHost;
   });
 }
 
