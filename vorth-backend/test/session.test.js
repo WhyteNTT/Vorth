@@ -133,6 +133,57 @@ test('the refresh cookie is httpOnly, sameSite and path-scoped', async () => {
   });
 });
 
+/*
+ * End-to-end proof that the policy in utils/cookiePolicy.js is actually wired
+ * into the cookie that gets written, rather than being correct in isolation and
+ * unused. That gap - a well-tested helper nobody calls - is exactly what the
+ * mutation runs on that module cannot catch, so it is pinned here instead.
+ *
+ * The env is mutated and restored rather than re-required: env.js is read at
+ * require() time and app.js holds the same module instance, so a fresh require
+ * would not change anything.
+ */
+async function cookieUnderConfiguredEnv(envPatch, call) {
+  const env = require('../src/config/env');
+  const saved = { clientOrigins: env.clientOrigins, publicUrl: env.publicUrl, secureCookies: env.secureCookies };
+  Object.assign(env, envPatch);
+  try {
+    const res = await call('POST', '/api/auth/register', { body: registerBody() });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.setCookie.find((c) => c.startsWith('vorth_refresh='));
+  } finally {
+    Object.assign(env, saved);
+  }
+}
+
+test('a split deployment actually issues a SameSite=None cookie', async () => {
+  await withServer({ rows: { users: [userRow()] } }, async ({ call }) => {
+    const cookie = await cookieUnderConfiguredEnv({
+      clientOrigins: ['https://vorth.vercel.app'],
+      publicUrl: 'https://vorth-api.onrender.com',
+      secureCookies: true,
+    }, call);
+
+    assert.ok(cookie, 'no refresh cookie was issued');
+    assert.match(cookie, /SameSite=None/i,
+      'a frontend on a different site would never receive a Lax cookie on fetch');
+    assert.match(cookie, /Secure/i, 'SameSite=None is rejected by browsers without Secure');
+  });
+});
+
+test('a same-origin deployment still issues Lax over the real endpoint', async () => {
+  // The other direction, through the same code path: the fix must not have become
+  // the default, which would weaken CSRF protection everywhere.
+  await withServer({ rows: { users: [userRow()] } }, async ({ call }) => {
+    const cookie = await cookieUnderConfiguredEnv({
+      clientOrigins: ['https://vorth-api.onrender.com'],
+      publicUrl: 'https://vorth-api.onrender.com',
+    }, call);
+
+    assert.match(cookie, /SameSite=Lax/i, 'a same-origin deployment lost its CSRF protection');
+  });
+});
+
 /* ------------------------------------------------------------------ *
  * Refresh / logout
  * ------------------------------------------------------------------ */
