@@ -567,6 +567,9 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Deployment configuration. Must load before script.js, which reads
+     window.VORTH_API_BASE while deciding where the API lives. -->
+<script src="config.js"></script>
 <script src="lib/safe.js"></script>
 <script src="lib/claims.js"></script>
 <script src="lib/apiError.js"></script>

@@ -101,10 +101,46 @@ test('script.js delegates to the module rather than duplicating the wording', ()
     'the provider markers live in the module, not in script.js');
 
   const html = fs.readFileSync(path.join(FRONTEND, 'index.html'), 'utf8');
-  const apiErrorAt = html.indexOf('lib/apiError.js');
-  const scriptAt = html.indexOf('script.js');
+  const apiErrorAt = html.indexOf('src="lib/apiError.js"');
+  const scriptAt = html.indexOf('src="script.js"');
   assert.ok(apiErrorAt > -1, 'index.html does not load lib/apiError.js');
+  assert.ok(scriptAt > -1, 'index.html does not load script.js');
   assert.ok(apiErrorAt < scriptAt, 'lib/apiError.js must load before script.js');
+});
+
+test('config.js loads before everything that reads the API base', () => {
+  /*
+   * Anchored on the src attribute, not the bare filename.
+   *
+   * The previous version searched for 'script.js' and 'lib/apiError.js', which
+   * matches the first occurrence anywhere in the file - including inside an HTML
+   * comment explaining the load order. Adding an explanatory comment about
+   * load order therefore broke the assertion, which is a sign the assertion was
+   * matching prose rather than markup.
+   */
+  const html = fs.readFileSync(path.join(FRONTEND, 'index.html'), 'utf8');
+  const configAt = html.indexOf('src="config.js"');
+  const scriptAt = html.indexOf('src="script.js"');
+  assert.ok(configAt > -1, 'index.html does not load config.js');
+  assert.ok(configAt < scriptAt,
+    'config.js must load before script.js, which reads VORTH_API_BASE at startup');
+});
+
+test('config.js sets no API base until one is actually configured', () => {
+  /*
+   * The placeholder guard is the thing that stops a half-finished deployment from
+   * sending traffic somewhere unexpected, so it is asserted rather than trusted.
+   */
+  const config = fs.readFileSync(path.join(FRONTEND, 'config.js'), 'utf8');
+  assert.match(config, /REPLACE-WITH-YOUR-API-HOST/,
+    'config.js no longer documents the placeholder to replace');
+  assert.match(config, /indexOf\('REPLACE-WITH-YOUR-API-HOST'\)/,
+    'config.js must stay inert while the placeholder is unreplaced');
+  // Local development must never be pointed at a remote host.
+  for (const local of ['localhost', '127.0.0.1']) {
+    assert.ok(config.includes(`'${local}'`),
+      `config.js does not exempt ${local} from the configured base`);
+  }
 });
 
 test('script.js still catches a network-level failure', () => {
