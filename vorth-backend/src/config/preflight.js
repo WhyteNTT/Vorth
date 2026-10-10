@@ -24,6 +24,7 @@
  */
 
 const env = require('./env');
+const { hostOf, isLoopback } = require('../utils/cookiePolicy');
 
 /**
  * @returns {{level: 'error'|'warn'|'info', code: string, message: string, fix: string}[]}
@@ -162,6 +163,35 @@ function inspect(env_ = env) {
     }
   }
 
+  /*
+   * The failure mode this catches was found on a live deployment, not predicted.
+   *
+   * Splitting the frontend onto Vercel and the API onto Render means CORS is set
+   * and everything *looks* right - requests are allowed, credentials are echoed.
+   * But the refresh token lives in a cookie, and cookie policy is decided by
+   * comparing CLIENT_ORIGINS against PUBLIC_URL. With PUBLIC_URL unset the server
+   * cannot tell which origin is "us", so it keeps SameSite=Lax - and a Lax cookie
+   * is not sent on cross-site fetch at all.
+   *
+   * The symptom is the worst kind: signup, login, browsing and commenting all
+   * work, because they use the in-memory access token. Only when that token
+   * expires does the reader appear to be logged out for no reason, which reads as
+   * a random logout bug rather than a cookie problem.
+   *
+   * So: a foreign origin configured, PUBLIC_URL missing, and the app cannot do
+   * the right thing. That is worth an error rather than a log nobody reads.
+   */
+  if (production && !env_.publicUrl && hasForeignOrigin(env_.clientOrigins)) {
+    add('error', 'cookie.split-without-public-url',
+      'CLIENT_ORIGINS lists a foreign frontend origin but PUBLIC_URL is not set, so the server '
+      + 'cannot tell which origin is itself. The refresh cookie stays SameSite=Lax, and a Lax '
+      + 'cookie is not sent on cross-site requests - so sessions will drop as soon as each '
+      + 'access token expires, with no error shown to anyone.',
+      `Set PUBLIC_URL to this service's own origin (e.g. ${'https://<this-service>.onrender.com'}) `
+      + 'so the cookie policy can tell us from foreign, and the refresh cookie becomes '
+      + 'SameSite=None. See src/utils/cookiePolicy.js.');
+  }
+
   /* ---------------------------------------------------------------- *
    * Cookies
    * ---------------------------------------------------------------- */
@@ -237,4 +267,20 @@ function assertAcceptable(findings = inspect()) {
   return findings;
 }
 
-module.exports = { inspect, report, assertAcceptable };
+/**
+ * Whether any configured origin is a real, remote host.
+ *
+ * Used only for the PUBLIC_URL finding below, where PUBLIC_URL is by definition
+ * empty and so "foreign" cannot be decided by comparison - a remote origin is the
+ * thing that makes the absence load-bearing. Loopback and unparseable entries do
+ * not count: a developer pointing CLIENT_ORIGINS at localhost is the same-origin
+ * case wearing a different hat.
+ */
+function hasForeignOrigin(clientOrigins) {
+  return (Array.isArray(clientOrigins) ? clientOrigins : []).some((origin) => {
+    const host = hostOf(origin);
+    return Boolean(host) && !isLoopback(host);
+  });
+}
+
+module.exports = { inspect, report, assertAcceptable, hasForeignOrigin };

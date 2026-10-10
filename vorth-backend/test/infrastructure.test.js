@@ -161,13 +161,34 @@ test('the memory store satisfies the express-rate-limit contract', async () => {
   assert.equal((await store.increment('other')).totalHits, 1, 'resetAll clears everything');
 });
 
-test('the memory store starts a fresh window once the old one lapses', async () => {
+test('increments accumulate within a window', async () => {
+  /*
+   * The window is 2s here, not 10ms.
+   *
+   * This assertion counts three sequential awaits and requires them all to land in
+   * one window. With a 10ms window that is a coin flip under load - the counter
+   * can lapse between the first and third increment and report 2 instead of 3,
+   * which is a flaky test rather than a real fault. The store is correct; the
+   * timing assumption was not.
+   *
+   * Window expiry is covered by the next test, where the lapse is the thing being
+   * observed rather than an incidental race.
+   */
   const store = new MemoryStore();
-  store.init({ windowMs: 10 });
+  store.init({ windowMs: 2000 });
   await store.increment('k');
   await store.increment('k');
   assert.equal((await store.increment('k')).totalHits, 3);
-  await new Promise((r) => setTimeout(r, 25));
+});
+
+test('the memory store starts a fresh window once the old one lapses', async () => {
+  // A short window is the point here, but the expiry is still given a wide margin
+  // over the sleep so a slow machine cannot wake up before the deadline and read
+  // a stale count.
+  const store = new MemoryStore();
+  store.init({ windowMs: 40 });
+  await store.increment('k');
+  await new Promise((r) => setTimeout(r, 250));
   assert.equal((await store.increment('k')).totalHits, 1, 'the counter resets after the window');
 });
 

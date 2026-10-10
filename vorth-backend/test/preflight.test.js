@@ -220,6 +220,67 @@ test('every finding carries an actionable fix', () => {
   }
 });
 
+test('a split deployment with no PUBLIC_URL is an error, not a warning', () => {
+  /*
+   * Found on the live Render deployment, not predicted.
+   *
+   * CLIENT_ORIGINS named the Vercel frontend, CORS answered correctly, and the
+   * page worked - but PUBLIC_URL was unset, so the cookie policy could not tell
+   * "us" from "foreign" and left the refresh cookie SameSite=Lax. A Lax cookie is
+   * not sent on cross-site fetch, so every reader would be silently logged out
+   * each time their access token expired, with nothing in the log.
+   *
+   * An error rather than a warning: it means sessions do not survive, which is
+   * worse than the mail and storage errors already flagged here.
+   */
+  const found = findingsFor({
+    clientOrigins: ['https://vorth.vercel.app', 'https://vorth.onrender.com'],
+    publicUrl: '',
+  });
+  const hit = found.find((f) => f.code === 'cookie.split-without-public-url');
+  assert.ok(hit, `the misconfiguration was not reported; got: ${found.map((f) => f.code).join(', ')}`);
+  assert.equal(hit.level, 'error');
+  assert.match(hit.message, /SameSite=Lax/, 'should name the actual mechanism');
+  assert.match(hit.fix, /PUBLIC_URL/, 'the fix should name the variable to set');
+});
+
+test('the same split deployment is silent once PUBLIC_URL is set', () => {
+  // The finding must disappear the moment the operator sets it, or it becomes
+  // noise they learn to ignore.
+  const found = findingsFor({
+    clientOrigins: ['https://vorth.vercel.app', 'https://vorth.onrender.com'],
+    publicUrl: 'https://vorth.onrender.com',
+  });
+  assert.equal(found.find((f) => f.code === 'cookie.split-without-public-url'), undefined);
+});
+
+test('a same-origin deployment never triggers the PUBLIC_URL finding', () => {
+  // Loopback origins and the service's own origin are not "foreign", so this must
+  // not fire for a normal single-service deployment with PUBLIC_URL unset.
+  for (const clientOrigins of [
+    ['http://localhost:5500', 'http://127.0.0.1:5500'],
+    ['http://app.localhost:3000'],
+    [],
+  ]) {
+    const found = findingsFor({ clientOrigins, publicUrl: '' });
+    assert.equal(
+      found.find((f) => f.code === 'cookie.split-without-public-url'), undefined,
+      `fired for ${JSON.stringify(clientOrigins)}`,
+    );
+  }
+});
+
+test('the PUBLIC_URL finding is production-only', () => {
+  // Development legitimately runs without PUBLIC_URL.
+  const dev = preflight.inspect({
+    ...HEALTHY,
+    nodeEnv: 'development',
+    clientOrigins: ['https://vorth.vercel.app'],
+    publicUrl: '',
+  });
+  assert.equal(dev.find((f) => f.code === 'cookie.split-without-public-url'), undefined);
+});
+
 test('VORTH_STRICT_CONFIG turns errors into a refusal to boot', () => {
   const findings = findingsFor({ mailTransport: 'console' });
   // Warnings alone never block.
