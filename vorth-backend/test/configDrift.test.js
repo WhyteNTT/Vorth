@@ -199,9 +199,11 @@ test('every model maps onto a table the schema creates', () => {
 
 test('every table is either modelled or deliberately raw', () => {
   // view_events and rate_limit_buckets are written by services with raw SQL.
+  // service_heartbeat likewise: one row, two columns, no document to hydrate and
+  // nothing in the app reads it - a model would be all ceremony.
   // Named explicitly so a genuinely orphaned table is a failure rather than a
   // judgement call at review time.
-  const RAW_ONLY = new Set(['view_events', 'rate_limit_buckets']);
+  const RAW_ONLY = new Set(['view_events', 'rate_limit_buckets', 'service_heartbeat']);
   const created = [...SCHEMA().matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]);
 
   const modelsDir = path.join(BACKEND, 'src', 'models');

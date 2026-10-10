@@ -31,10 +31,39 @@ const doc = YAML.parse(raw);
 const service = doc.services[0];
 const env = Object.fromEntries((service.envVars || []).map((v) => [v.key, v]));
 
-test('the blueprint parses and declares one web service', () => {
+test('the blueprint parses and declares one web service and one cron job', () => {
   assert.ok(doc.services, 'no services block');
-  assert.equal(doc.services.length, 1);
+  const webs = doc.services.filter((s) => s.type === 'web');
+  assert.equal(webs.length, 1, `expected exactly one web service, got ${webs.length}`);
   assert.equal(service.type, 'web');
+});
+
+test('the keep-warm cron job fires often enough, and early enough', () => {
+  /*
+   * Two numbers, both load-bearing, and the whole reason the free plan is viable:
+   *
+   *   - every 5 minutes, comfortably inside the ~15-minute spin-down. A schedule at
+   *     or past 15 minutes would let the instance sleep between pings, making the
+   *     job useless while still appearing configured.
+   *   - frequently enough that two missed slots are still under the threshold, so
+   *     "the job stopped" is detectable long before the instance would sleep.
+   */
+  const cron = (doc.services || []).find((s) => s.type === 'cron');
+  assert.ok(cron, 'no cron service declared - a free instance will spin down');
+
+  const m = /^(\*|\d+)\/(\d+) \* \* \* \*$/.exec(cron.schedule);
+  assert.ok(m, `unexpected schedule format: ${cron.schedule}`);
+  const every = Number(m[2]);
+  assert.ok(every > 0 && every <= 5,
+    `every ${every} minutes; 5 or less is what keeps a 15-minute spin-down out of reach`);
+  assert.ok(every * 2 <= 900,
+    'two missed slots must still fit inside the spin-down window, or a lapse is undetectable in time');
+
+  assert.ok(cron.httpGet && cron.httpGet.path,
+    'a cron job must say what it calls');
+  assert.match(cron.httpGet.path, /keep-warm/,
+    'the keep-warm job must hit the keep-warm endpoint, not /api/health - a health '
+    + 'check is not a heartbeat and would be indistinguishable from Render\'s own');
 });
 
 test('the web service runs on the free plan, and says what that costs', () => {

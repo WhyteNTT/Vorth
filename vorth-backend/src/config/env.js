@@ -101,6 +101,10 @@ module.exports = {
   emailVerificationHours: parseInt(process.env.EMAIL_VERIFICATION_HOURS, 10) || 24,
   passwordResetHours: parseInt(process.env.PASSWORD_RESET_HOURS, 10) || 1,
   publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''),
+  // Guards GET /api/keep-warm/status. Optional by design: without it that endpoint
+  // refuses to answer rather than reporting the heartbeat's state to anyone who
+  // asks, so leaving it unset is safe rather than dangerous.
+  keepWarmToken: process.env.KEEP_WARM_TOKEN || '',
 
   // ---- mail transport ----
   // 'console' logs the message instead of sending it (development default).

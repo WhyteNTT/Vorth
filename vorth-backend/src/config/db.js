@@ -452,6 +452,26 @@ async function connectDB() {
       window_started_at timestamptz NOT NULL DEFAULT now()
     );
 
+    -- Proof that the keep-warm ping is actually arriving.
+    --
+    -- A scheduled job that fires every 5 minutes exists to stop the free instance
+    -- spinning down after 15. If it silently stops firing - the scheduler is
+    -- missed, the job errors, the URL changed - nothing breaks immediately, and
+    -- the only symptom is a reader hitting a cold instance weeks later. So each
+    -- ping records itself, and the recorded gap is the evidence.
+    --
+    -- One row, updated in place. Not a log: the question is always "when did a
+    -- ping last arrive", and a table that grows forever would answer a question
+    -- nobody asks.
+    CREATE TABLE IF NOT EXISTS service_heartbeat (
+      service text PRIMARY KEY,
+      last_ping_at timestamptz NOT NULL DEFAULT now(),
+      -- The largest gap ever seen between two pings. Only ever increases, so
+      -- evidence that the keep-warm job lapsed survives anyone poking the endpoint
+      -- by hand afterwards.
+      max_gap_seconds integer NOT NULL DEFAULT 0
+    );
+
     -- ---- indexes (idempotent) ----
     CREATE INDEX IF NOT EXISTS idx_chapters_series   ON chapters (series, num);
     CREATE INDEX IF NOT EXISTS idx_comments_series   ON comments (series) WHERE is_removed = false;

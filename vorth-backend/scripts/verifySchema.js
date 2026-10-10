@@ -28,6 +28,10 @@ const TABLES = [
   'users', 'series', 'chapters', 'comments', 'notifications',
   'reading_progress', 'dmca_reports', 'dmca_counter_notices', 'view_events',
   'refresh_tokens', 'auth_tokens', 'rate_limit_buckets', 'content_reports',
+  // Written by the keep-warm ping, read by nothing at runtime. Listed because a
+  // missing table here means the schema and this script have drifted, which is the
+  // failure the check exists to catch.
+  'service_heartbeat',
 ];
 
 /**

@@ -108,39 +108,25 @@ test('script.js delegates to the module rather than duplicating the wording', ()
   assert.ok(apiErrorAt < scriptAt, 'lib/apiError.js must load before script.js');
 });
 
-test('config.js loads before everything that reads the API base', () => {
+test('there is no frontend config file left to configure', () => {
   /*
-   * Anchored on the src attribute, not the bare filename.
+   * config.js existed to point a separately-hosted frontend at the API. That
+   * deployment was dropped - Render serves the page and the API from one origin -
+   * so the file became dead configuration: loaded on every page, covered by tests,
+   * and setting nothing at runtime.
    *
-   * The previous version searched for 'script.js' and 'lib/apiError.js', which
-   * matches the first occurrence anywhere in the file - including inside an HTML
-   * comment explaining the load order. Adding an explanatory comment about
-   * load order therefore broke the assertion, which is a sign the assertion was
-   * matching prose rather than markup.
+   * Asserted as absent rather than merely unused. By this repository's own standard
+   * (the configDrift guards exist to kill exactly this) a file whose only remaining
+   * job is to be configured should not still be here, and a guard is what stops it
+   * being reintroduced by someone who half-remembers why it existed.
    */
-  const html = fs.readFileSync(path.join(FRONTEND, 'index.html'), 'utf8');
-  const configAt = html.indexOf('src="config.js"');
-  const scriptAt = html.indexOf('src="script.js"');
-  assert.ok(configAt > -1, 'index.html does not load config.js');
-  assert.ok(configAt < scriptAt,
-    'config.js must load before script.js, which reads VORTH_API_BASE at startup');
-});
+  const configPath = path.join(FRONTEND, 'config.js');
+  assert.equal(fs.existsSync(configPath), false,
+    'config.js is dead configuration and should not come back');
 
-test('config.js sets no API base until one is actually configured', () => {
-  /*
-   * The placeholder guard is the thing that stops a half-finished deployment from
-   * sending traffic somewhere unexpected, so it is asserted rather than trusted.
-   */
-  const config = fs.readFileSync(path.join(FRONTEND, 'config.js'), 'utf8');
-  assert.match(config, /REPLACE-WITH-YOUR-API-HOST/,
-    'config.js no longer documents the placeholder to replace');
-  assert.match(config, /indexOf\('REPLACE-WITH-YOUR-API-HOST'\)/,
-    'config.js must stay inert while the placeholder is unreplaced');
-  // Local development must never be pointed at a remote host.
-  for (const local of ['localhost', '127.0.0.1']) {
-    assert.ok(config.includes(`'${local}'`),
-      `config.js does not exempt ${local} from the configured base`);
-  }
+  const html = fs.readFileSync(path.join(FRONTEND, 'index.html'), 'utf8');
+  assert.ok(!html.includes('config.js'),
+    'index.html must not reference a file that no longer exists');
 });
 
 test('script.js still catches a network-level failure', () => {

@@ -252,6 +252,19 @@ const REVIEWED = {
   'GET /api/legal/:doc': 'public',
   'GET /api': 'public',
   'GET /api/health': 'public',
+  /*
+   * The keep-warm ping is public by necessity, not by accident.
+   *
+   * A Render cron job can only issue a plain GET: it cannot send a request header
+   * and it cannot read a value generated at boot. So requiring a credential here
+   * would mean the scheduled job could never reach it, the instance would go cold,
+   * and nothing would look wrong. The endpoint's only effect is writing a
+   * timestamp, and returning a response already proves the instance is awake.
+   */
+  'GET /api/keep-warm': 'public',
+  // Guarded by X-Keep-Warm-Token rather than a session. The matrix records the
+  // router-level decision; the header check is in the handler and in keepWarm.test.js.
+  'GET /api/keep-warm/status': 'public',
 };
 
 /* ------------------------------------------------------------------ *

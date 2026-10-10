@@ -168,6 +168,35 @@ services:
       - key: S3_PUBLIC_BASE_URL
         sync: false
 
+# Keeps a free instance from spinning down.
+  #
+  # A free web service is stopped after ~15 minutes without traffic, and the next
+  # request waits for it to wake. On a public site that means the first reader of
+  # every quiet period meets a blank page. This job costs nothing and prevents it.
+  #
+  # Every 5 minutes rather than something nearer the 15-minute limit: the margin is
+  # deliberate, and the 5-minute gap is also what makes a lapse detectable (see
+  # src/services/heartbeat.js). Two missed intervals are enough to prove the job
+  # stopped; one late run is just scheduler jitter.
+  #
+  # The ping carries a token generated at boot, so only this job records a
+  # heartbeat - Render's own health checks and any uptime monitor hitting /api/health
+  # cannot be mistaken for it.
+  - type: cron
+    name: vorth-keep-warm
+    schedule: "*/5 * * * *"
+    timezone: UTC
+    # Render cron jobs only ever make an HTTP request, so a web service is the
+    # only kind that can hold one.
+    httpGet:
+      # The token is appended at runtime; Render does not interpolate environment
+      # values into a URL. Leave the path as /api/keep-warm and see the README
+      # section "Keep-warm ping" for the working invocation.
+      path: /api/keep-warm
+    # An instance asleep at the scheduled moment is woken by the request itself.
+    # That is the entire mechanism, so a job that runs while the service is asleep
+    # still succeeds - it just costs one slow response.
+
 databases:
   # Render-managed Postgres. Vorth owns its schema and applies it on boot, so
   # there is no separate migration step to keep in step. The change is purely
