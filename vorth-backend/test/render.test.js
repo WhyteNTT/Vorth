@@ -79,20 +79,20 @@ test('the web service runs on the free plan, and says what that costs', () => {
     'the plan comment no longer explains the trade-off, which is the only reason this is safe');
 });
 
-test('the database is on a plan that does not expire', () => {
+test('no database is declared, because production is external', () => {
   /*
-   * Render expires a free Postgres after 30 days. That is fine for a trial and
-   * unacceptable for reader accounts, DMCA records and upload metadata, so the
-   * database deliberately stays on a paid plan even though the web service does
-   * not. Guarding it separately because the two decisions look identical and
-   * are not.
+   * Was: "the database is on a plan that does not expire" - asserting a Render
+   * Postgres exists on a paid plan. Inverted when the block was removed, because
+   * the database is Neon and supplied by hand.
+   *
+   * The old assertion would have failed on the correct file, and the new one would
+   * have failed on the old one. Either way it now states the fact that matters:
+   * applying this blueprint must not create a database.
    */
-  const db = (doc.databases || [])[0];
-  assert.ok(db, 'no database declared');
-  assert.notEqual(db.plan, 'free',
-    'a free Postgres is deleted after 30 days, taking every account and DMCA record with it');
-  assert.match(raw, /expires? a free Postgres|expiry/i,
-    'the 30-day expiry is not documented where an operator would read it');
+  assert.equal(doc.databases, undefined,
+    'this blueprint declares no database; a re-applied block would provision a second, empty one for $7/month');
+  assert.match(raw, /NEON/i,
+    'the reason - an external database - should be recorded where an operator reads it');
 });
 
 test('the build targets the backend and installs production dependencies only', () => {
@@ -104,14 +104,57 @@ test('the build targets the backend and installs production dependencies only', 
   assert.equal(service.healthCheckPath, '/api/health');
 });
 
-test('DATABASE_URL is wired to the database the blueprint declares', () => {
-  const link = env.DATABASE_URL.fromDatabase;
-  assert.ok(link, 'DATABASE_URL must be linked, not left as sync:false — otherwise a '
-    + 'blueprint deploy provisions a service with no database and no warning');
-  assert.equal(link.property, 'connectionString');
+test('DATABASE_URL is the operator\'s to supply, and is not linked to a database this blueprint provisions', () => {
+  /*
+   * Reversed deliberately. This used to assert the opposite - that DATABASE_URL was
+   * linked from a declared `databases:` block - and that assertion was right for a
+   * setup nobody ended up using.
+   *
+   * Production runs on Neon, supplied by hand. The block was never applied, so a
+   * blueprint deploy would have provisioned a second, empty, $7/month database
+   * that nothing connected to, while the file claimed the two were linked. That is
+   * the worst kind of drift: invisible until a bill arrives.
+   *
+   * So now the failure this guards against is the link coming back without the
+   * database behind it, which provisions a service with no database and no
+   * warning.
+   */
+  assert.equal(env.DATABASE_URL.fromDatabase, undefined,
+    'DATABASE_URL is a hand-set Neon string; linking it would require a `databases:` block that does not exist');
+
   const declared = (doc.databases || []).map((d) => d.name);
-  assert.ok(declared.includes(link.name),
-    `DATABASE_URL points at "${link.name}", which is not declared (have: ${declared.join(', ')})`);
+  assert.equal(declared.length, 0,
+    `this blueprint provisions no database, but declares: ${declared.join(', ')}`);
+  assert.ok(env.DATABASE_URL.sync === false,
+    'DATABASE_URL must be sync:false so re-applying the blueprint leaves the live value alone '
+    + 'instead of blanking a production connection string');
+
+  // Any link at all is a bug now, not just this one key.
+  const linked = Object.entries(env).filter(([, v]) => v.fromDatabase).map(([k]) => k);
+  assert.deepEqual(linked, [], `nothing should be linked from a database now: ${linked.join(', ')}`);
+});
+
+test('KEEP_WARM_TOKEN is declared, so the heartbeat can be checked in production', () => {
+  /*
+   * Added because the endpoint is useless without it: unset, it refuses to answer
+   * rather than reporting the heartbeat's state to anyone who asks. Declared as
+   * sync:false because the value is a secret the operator generates.
+   */
+  assert.ok(env.KEEP_WARM_TOKEN, 'KEEP_WARM_TOKEN is not declared');
+  assert.equal(env.KEEP_WARM_TOKEN.sync, false,
+    'KEEP_WARM_TOKEN must be sync:false; a committed value would be a published secret');
+});
+
+test('the blueprint does not promise a database it does not provision', () => {
+  // The header comment and the body must agree. This drifted once: the header said
+  // the database was declared and linked, and it was neither.
+  const header = raw.slice(0, raw.indexOf('services:'));
+  assert.doesNotMatch(header, /database is declared below and linked/i,
+    'the header still claims a linked database');
+  assert.match(header, /does not provision one/i,
+    'the header should say plainly that no database is provisioned');
+  assert.match(raw, /NO `databases:` BLOCK, DELIBERATELY/i,
+    'the reason the block is absent should stay recorded in the file');
 });
 
 test('PORT is left to Render, which injects it', () => {
@@ -170,8 +213,21 @@ test('nothing secret is committed', () => {
   }
 });
 
-test('the database is not reachable from the internet', () => {
-  for (const d of doc.databases) {
-    assert.deepEqual(d.ipAllowList, [], `${d.name} has a non-empty ipAllowList`);
+test('if a database is ever declared here, it must not be reachable from the internet', () => {
+  /*
+   * Now a conditional rather than a loop over a known database.
+   *
+   * This assertion was passing vacuously once the block was removed - a loop over an
+   * empty array checks nothing and looks identical to a real pass. It is written so
+   * that it still says something if a block is ever added back, which is the only
+   * time it matters.
+   */
+  const declared = doc.databases || [];
+  for (const d of declared) {
+    assert.deepEqual(d.ipAllowList, [],
+      `${d.name} has a non-empty ipAllowList: the database would be reachable from the internet`);
   }
+  // And say so out loud, so an empty pass cannot be mistaken for a verified one.
+  assert.ok(declared.length === 0 || declared.every((d) => Array.isArray(d.ipAllowList)),
+    'every declared database must state its ipAllowList explicitly');
 });

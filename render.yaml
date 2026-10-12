@@ -1,22 +1,33 @@
 # Render blueprint for Vorth.
 #
 # One web service: the API also serves the static frontend, so there is no second
-# service to keep in sync. The database is declared below and linked into the
-# service's DATABASE_URL, so a blueprint deploy provisions both.
+# service to keep in sync. The database is external (Neon) and supplied by hand as
+# DATABASE_URL; this blueprint does not provision one.
 #
 # Required before the site is publicly usable - all four are flagged at boot by
 # src/config/preflight.js, and VORTH_STRICT_CONFIG=1 turns the first three into a
 # refusal to start:
 #
+#   DATABASE_URL          the Neon connection string. Set by hand; see below.
 #   CLIENT_ORIGINS        comma-separated allowed origins. With one service
-#                         serving both, the site's own origin is enough.
+#                         serving both, the site's own origin is enough. Listing a
+#                         foreign origin also relaxes the refresh cookie to
+#                         SameSite=None, which weakens CSRF protection - only do it
+#                         if a separate frontend host genuinely exists.
 #   PUBLIC_URL            the site origin. Without it every emailed reset and
-#                         verification link is relative and unusable.
+#                         verification link is relative and unusable, and the
+#                         server cannot tell which configured origin is itself, so
+#                         it keeps the refresh cookie at SameSite=Lax.
 #   MAIL_TRANSPORT=smtp   plus SMTP_*. Left unset, password reset and email
 #                         verification links are printed to the log and reach
 #                         nobody, so both features are dead.
 #   STORAGE_DRIVER=s3     plus S3_*. Render's filesystem is ephemeral, so local
 #                         uploads are lost on every deploy and on every restart.
+#
+# Optional, but without it you cannot tell whether the keep-warm ping is still
+# arriving (see src/services/heartbeat.js):
+#
+#   KEEP_WARM_TOKEN       guards GET /api/keep-warm/status.
 #
 # Separately, and not a configuration matter: register a DMCA designated agent
 # with the U.S. Copyright Office before operating publicly. It takes days, and
@@ -26,15 +37,18 @@ services:
   - type: web
     name: vorth-api
     runtime: node
-    # 'free' costs nothing and is the right choice here, because the frontend is
-    # deployed separately (Vercel) and serves the page instantly. A free web
-    # service spins down after ~15 minutes of inactivity, so what a reader can
-    # notice is the *first API call* after an idle period taking up to ~30s while
-    # the instance wakes - not a slow or blank page. Once loaded, the SPA keeps
-    # working because the access token lives in memory.
+    # 'free' costs nothing, and this service serves the page itself - so what a
+    # free instance actually costs is a slow *first* request after an idle period,
+    # while it wakes: the page is a spinner rather than a blank screen, and once
+    # loaded the SPA keeps working because the access token lives in memory.
     #
-    # Raise this to 'starter' ($7/mo) when that first-request delay stops being
-    # acceptable. Nothing in the app needs changing to do so.
+    # That delay is currently prevented rather than merely tolerated: an uptime
+    # monitor pings GET /api/keep-warm every 5 minutes, well inside the ~15-minute
+    # spin-down. Render's own cron jobs need a paid plan, so the ping has to come
+    # from outside.
+    #
+    # If that monitor ever lapses, raise this to 'starter' ($7/mo) to remove the
+    # problem instead of depending on a third party. Nothing in the app changes.
     plan: free
     region: frankfurt
 
@@ -53,13 +67,14 @@ services:
       # set here: hardcoding it was wrong, and the app defaults to 5000 only when
       # nothing supplies one.
 
-      # Render's managed Postgres, linked from the `databases` block below. This
-      # is what makes a blueprint deploy actually usable; leaving it as
-      # `sync: false` provisions a service with no database.
+      # Neon, hand-set. Not linked from a `databases:` block, because there isn't
+      # one - see the note at the foot of this file.
+      #
+      # `sync: false` is what makes the value yours to supply: Render leaves the
+      # existing value alone on re-apply instead of overwriting a live production
+      # connection string with a blank one.
       - key: DATABASE_URL
-        fromDatabase:
-          name: vorth-db
-          property: connectionString
+        sync: false
 
       - key: DATABASE_SSL
         value: 'true'
@@ -120,6 +135,11 @@ services:
       - key: DMCA_CONTACT_EMAIL
         sync: false
       - key: SUPPORT_CONTACT_EMAIL
+        sync: false
+      # Guards GET /api/keep-warm/status. Any random string; unset means that
+      # endpoint refuses to answer rather than reporting the heartbeat's state to
+      # anyone who asks. Set once the keep-warm monitor is running.
+      - key: KEEP_WARM_TOKEN
         sync: false
       # DMCA counter-notice response window, in business days. 10 to 14; values
       # outside that are clamped. Defaults to 10, the earliest the statute
@@ -189,23 +209,18 @@ services:
   # Both are free. Neither is declared here because both need an account on a
   # third-party service, which is the operator's to create.
 
-databases:
-  # Render-managed Postgres. Vorth owns its schema and applies it on boot, so
-  # there is no separate migration step to keep in step. The change is purely
-  # additive - new tables and one new column - so deploying over an existing
-  # database upgrades it in place.
+# NO `databases:` BLOCK, DELIBERATELY.
   #
-  # 'free' here is not free forever: Render expires a free Postgres after 30
-  # days, and you then have to keep paying for the data or lose it. That makes
-  # 'free' reasonable for a trial and a bad idea for content you care about -
-  # reader accounts, uploads metadata, DMCA records. 'basic-256mb' is $7/month
-  # and does not expire.
+  # One used to be here, provisioning a Render-managed Postgres named `vorth-db`
+  # on the $7/month basic-256mb plan. It was removed because it never existed in
+  # practice: production runs on Neon, and `DATABASE_URL` above is a hand-set
+  # string (`sync: false`), not a link. Applying this blueprint would have created
+  # a second, empty, $7/month database that nothing connects to.
   #
-  # This is the one place a free tier costs something real. Everything else in
-  # this blueprint can run on 'free' indefinitely.
-  - name: vorth-db
-    plan: basic-256mb
-    region: frankfurt
-    postgresMajorVersion: '16'
-    ipAllowList: []      # reachable only from inside Render
-    databaseName: vorth
+  # Keeping the declaration would have been worse than useless: it is the kind of
+  # drift where the file says one thing and the running service does another, and
+  # nobody notices until a bill arrives.
+  #
+  # To use a Render-managed database instead, re-add the block AND change
+  # DATABASE_URL above from `sync: false` to a `fromDatabase` link. Doing one
+  # without the other is what caused the original confusion.
