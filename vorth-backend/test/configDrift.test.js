@@ -349,6 +349,148 @@ const scripts = JSON.parse(read(BACKEND, 'package.json')).scripts;
  * Frontend assets.
  * ------------------------------------------------------------------ */
 
+test('the signup form declares every constraint the API enforces', () => {
+  /*
+   * Added after a real report: a reader was told "Validation failed" with no
+   * indication of which field, and the cause was a username containing a dot and
+   * a password under 8 characters - both of which the form happily submitted,
+   * because it only declared `required` and type=email.
+   *
+   * The rule here is that the browser must not be able to construct a payload the
+   * server will reject. Asserted against the validators themselves rather than
+   * against a copy of the numbers, so changing the API without changing the form
+   * fails here.
+   */
+  const html = read(FRONTEND, 'index.html');
+  const controller = read(BACKEND, 'src', 'controllers', 'authController.js');
+
+  const attr = (id, name) => {
+    const tag = html.match(new RegExp(`id="${id}"[^>]*`));
+    assert.ok(tag, `index.html has no input with id="${id}"`);
+    const m = tag[0].match(new RegExp(`${name}="([^"]*)"`));
+    return m ? m[1] : null;
+  };
+
+  // The server: body('username').trim().toLowerCase().matches(/^[a-z0-9_]{3,24}$/)
+  const usernameRule = controller.match(/body\('username'\)[\s\S]*?\.matches\((\/\^.*?\/)\)/);
+  assert.ok(usernameRule, 'could not read the username validator out of the controller');
+  const [, serverPattern] = usernameRule;
+  // Checked as literal source text, not as a regex: serverPattern is the pattern
+  // *as written in the controller*, so its braces are unescaped there.
+  assert.ok(serverPattern.includes('a-z0-9_') && serverPattern.includes('{3,24}'),
+    `username validator changed shape (${serverPattern}); update this test deliberately`);
+
+  const formPattern = attr('signupUsername', 'pattern');
+  assert.ok(formPattern, 'the username input declares no pattern, so anything can be submitted');
+  // Must reject exactly what the server rejects. Both cases allowed, because the
+  // server lowercases before matching.
+  for (const bad of ['john.doe', 'john-doe', 'john doe', 'ab', 'a'.repeat(25), 'john@doe']) {
+    assert.ok(!new RegExp(`^(?:${formPattern})$`).test(bad),
+      `the form's pattern would still accept "${bad}", which the server rejects`);
+  }
+  for (const good of ['john', 'john_doe', 'a_b_9', 'A'.repeat(24)]) {
+    assert.ok(new RegExp(`^(?:${formPattern})$`).test(good),
+      `the form's pattern rejects "${good}", which the server accepts`);
+  }
+
+  // The server: body('password').isLength({ min: 8 })
+  const passwordRule = controller.match(/body\('password'\)\.isLength\(\{\s*min:\s*(\d+)/);
+  assert.ok(passwordRule, 'could not read the password length rule out of the controller');
+  const minLength = Number(passwordRule[1]);
+  for (const id of ['signupPassword', 'signupConfirmPassword']) {
+    assert.equal(Number(attr(id, 'minlength')), minLength,
+      `${id} must declare minlength="${minLength}" to match the API`);
+  }
+
+  // The server: body('displayName').isLength({ max: 60 })
+  const nameRule = controller.match(/body\('displayName'\)[\s\S]*?isLength\(\{\s*max:\s*(\d+)/);
+  assert.ok(nameRule, 'could not read the display-name length rule out of the controller');
+  assert.equal(Number(attr('signupName', 'maxlength')), Number(nameRule[1]),
+    'the display-name input must declare the same maximum the API enforces');
+});
+
+test('the form-error stylesheet class is the one the script actually sets', () => {
+  /*
+   * The script set `form-hint err` while the stylesheet defined `.form-hint.error`.
+   * Nothing failed: the class applied, matched no rule, and every error message
+   * rendered in the dim informational colour. Seven occurrences, none noticed.
+   *
+   * Reading the class out of the script and asserting the stylesheet knows it is
+   * the only way that class drift becomes a failing test rather than a colour that
+   * quietly does not apply.
+   */
+  const script = read(FRONTEND, 'script.js');
+  const css = read(FRONTEND, 'styles.css');
+  const used = new Set([...script.matchAll(/'(form-hint(?:\s+\S+)?)'/g)].map((m) => m[1]));
+
+  assert.ok(used.size > 0, 'no form-hint classes found in script.js');
+  for (const cls of used) {
+    const [base, ...variants] = cls.split(/\s+/);
+    for (const variant of variants) {
+      /*
+       * Matched as a complete selector, not with `includes`.
+       *
+       * The first version of this guard used `css.includes('.form-hint.err')`, and
+       * mutation testing showed it passing for exactly the bug it exists to catch:
+       * `.form-hint.error` *contains* the substring `.form-hint.err`, so a
+       * substring check cannot tell "the rule exists" from "a longer rule with the
+       * same prefix exists". The negative lookahead is what makes it exact.
+       */
+      const exact = new RegExp(`\\.${base}\\.${variant}(?![\\w-])`);
+      assert.ok(exact.test(css),
+        `script.js sets "${cls}" but styles.css defines no "${base}.${variant}" rule - the styling silently does nothing`);
+    }
+  }
+});
+
+test('validation details reach the reader rather than being discarded', () => {
+  /*
+   * The API returns `{ message, details: [{ field, message }] }`. Only `message`
+   * used to be used, so "Validation failed" reached the screen with the reason
+   * dropped. Asserted as a chain because any link can be the one that breaks:
+   * the fetch must keep the details, and the form must render them.
+   */
+  const script = read(FRONTEND, 'script.js');
+  assert.match(script, /err\.details\s*=/,
+    'apiFetch does not carry payload.details onto the thrown error');
+
+  /*
+   * Asserted at the call sites, not by the identifier merely existing.
+   *
+   * Checking `/showFieldErrors/` is satisfied by the function's own definition, so
+   * a mutation that removed the calls still passed. What matters is that the two
+   * auth forms pass their own hint element, and that the renderer actually writes
+   * into it.
+   */
+  for (const hint of ['#signupHint', '#loginHint']) {
+    assert.ok(script.includes(`showFieldErrors('${hint}'`),
+      `no form renders validation details into ${hint}`);
+  }
+  const render = script.slice(script.indexOf('function showFieldErrors'), script.indexOf('function showFieldErrors') + 2000);
+  /*
+   * One assertion, not two, and matched in sequence on purpose.
+   *
+   * showFieldErrors has two branches: the per-field details path, and a fallback
+   * for failures that carry no details. Two separate checks - "some textContent
+   * assignment exists" and "some className assignment exists" - were both satisfied
+   * by the *fallback* branch alone, so mutation testing showed the guards stayed
+   * green while the details branch was gutted: first its write removed, then its
+   * error class removed. Requiring the write and the class together, with the
+   * write anchored on `lines.join` so only the details branch can match, is what
+   * makes the check bite.
+   */
+  assert.match(render,
+    /el\.textContent\s*=\s*lines\.join\([^)]*\);\s*el\.className\s*=\s*'form-hint error'/,
+    'the branch that reports per-field details does not write them into the hint element '
+    + 'and mark it as an error');
+
+  // And the forms must have somewhere to render them to.
+  const html = read(FRONTEND, 'index.html');
+  for (const id of ['signupHint', 'loginHint']) {
+    assert.ok(html.includes(`id="${id}"`), `index.html has no #${id} to render errors into`);
+  }
+});
+
 test('every asset index.html references exists', () => {
   const html = read(FRONTEND, 'index.html');
   const refs = new Set();
