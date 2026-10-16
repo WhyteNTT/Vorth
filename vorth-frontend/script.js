@@ -110,6 +110,54 @@ function avgRating(comments){ if(!comments || !comments.length) return 0; return
 let toastTimer=null;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200); }
 function getToken(){ return state.token || localStorage.getItem(TOKEN_STORAGE_KEY) || ''; }
+
+/*
+ * Field names as the reader wrote them.
+ *
+ * The API names its fields in camelCase (`agreedToTerms`), which is fine for a
+ * developer and useless in a message telling someone why their account was not
+ * created. Anything unmapped falls back to the raw name rather than being
+ * dropped: an unfamiliar label is still better than silence.
+ */
+const FIELD_LABELS = {
+  displayName:'Display name', username:'Username', email:'Email', password:'Password',
+  confirmPassword:'Password confirmation', agreedToTerms:'Terms acceptance',
+  ageConfirmed:'Age confirmation', identifier:'Username or email',
+  title:'Title', type:'Type', synopsis:'Synopsis', author:'Author', artist:'Artist',
+  status:'Status', rating:'Rating', text:'Review', coverImage:'Cover image',
+  genre:'Genre', tag:'Tag', limit:'Results per page', page:'Page', parent:'Parent comment',
+  seriesId:'Series', chapterId:'Chapter', commentId:'Comment',
+};
+
+/**
+ * Renders a validation failure next to the form that caused it.
+ *
+ * A toast is wrong for this: it disappears after 2.2 seconds and carries one line,
+ * which is not long enough to read a list of three field errors or long enough to
+ * act on. A reader who misses it has to retype everything to find out what was
+ * wrong.
+ *
+ * Returns the single-line summary, so the caller can still toast it - some failures
+ * happen with no visible form on screen.
+ */
+function showFieldErrors(hintId, err){
+  const details = (err && Array.isArray(err.details)) ? err.details : [];
+  const el = hintId ? $(hintId) : null;
+  if(!details.length){
+    const msg = (err && err.message) || 'Something went wrong.';
+    if(el){ el.textContent = msg; el.className = 'form-hint error'; }
+    return msg;
+  }
+  const MAX = 3;
+  const shown = details.slice(0, MAX).map((d) => {
+    const label = FIELD_LABELS[d.field] || d.field;
+    return d.field ? `${label}: ${d.message}` : d.message;
+  });
+  const extra = details.length - shown.length;
+  const lines = shown.concat(extra > 0 ? [`and ${extra} more`] : []);
+  if(el){ el.textContent = lines.join('  •  '); el.className = 'form-hint error'; }
+  return lines.join('  •  ');
+}
 /*
  * All API traffic goes through here.
  *
@@ -214,7 +262,23 @@ async function apiFetch(path, options={}){
     }
   }
   if(!response.ok){
-    throw new Error(apiErrorMessage(response, payload));
+    const err = new Error(apiErrorMessage(response, payload));
+    /*
+     * Carry the per-field reasons through instead of discarding them.
+     *
+     * The API returns `{ message: 'Validation failed', details: [{ field, message }] }`.
+     * Only `message` used to survive, so a reader whose username contained a dot
+     * was told "Validation failed" and nothing about which field or why - which
+     * reads as a broken server rather than a typo. The detail is already written
+     * for a person, so it is worth passing on.
+     *
+     * Only copied when it is an array of objects with a message. Anything else is
+     * ignored: this must never be the thing that throws.
+     */
+    if(payload && Array.isArray(payload.details)){
+      err.details = payload.details.filter((d) => d && typeof d.message === 'string' && d.message);
+    }
+    throw err;
   }
   return payload ?? {};
 }
@@ -224,8 +288,8 @@ async function loadSeriesDetail(seriesId){ if(state.detailCache[seriesId]) retur
 async function loadChapter(chapterId){ if(state.chapterCache[chapterId]) return state.chapterCache[chapterId]; try{ const data = await apiFetch(`/chapters/${chapterId}`); const chapter = normalizeChapter(data.chapter); state.chapterCache[chapterId] = chapter; return chapter; } catch(err){ toast(err.message || 'Could not open chapter.'); return null; } }
 async function loadAuthProfile(){ if(!state.token && !localStorage.getItem(TOKEN_STORAGE_KEY)) return null; try{ const data = await apiFetch('/auth/me'); state.profile = data.user || null; if(state.profile && !state.token) state.token = localStorage.getItem(TOKEN_STORAGE_KEY) || ''; return state.profile; } catch(err){ clearSession(); return null; } }
 async function refreshUserData(){ if(!isSignedIn()) return; try{ const [libraryRes, downloadsRes, progressRes, notifRes, mineRes, dmcaRes] = await Promise.all([apiFetch('/library'), apiFetch('/library/downloads'), apiFetch('/progress'), apiFetch('/notifications'), apiFetch('/series/mine'), apiFetch('/dmca/mine').catch(() => ({ takedowns: [] }))]); /* The API returns populated documents, not bare ids, so these tabs no longer depend on what happens to be in state.seriesMap. */ state.librarySeries = (libraryRes.series || []).map(normalizeSeries).filter(Boolean); state.libraryIds = state.librarySeries.map(s=>s.id); state.downloadItems = (downloadsRes.downloads || []).map(item=>({ ...item, series: normalizeSeries(item.series), chapter: normalizeChapter(item.chapter) })).filter(item=>item.series && item.chapter); state.ownedSeries = (mineRes.series || []).map(normalizeSeries).filter(Boolean); state.progressEntries = (progressRes.progress || []).map(normalizeProgress).filter(Boolean).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); state.progressMap = {}; state.progressEntries.forEach(entry=>{ if(entry.series) state.progressMap[entry.series.id] = entry; }); state.notifications = notifRes.notifications || []; state.unreadNotifications = notifRes.unreadCount || 0; state.dmcaTakedowns = dmcaRes.takedowns || []; } catch(err){ toast(err.message || 'Could not sync your account data.'); } }
-async function signIn(identifier, password){ try{ const data = await apiFetch('/auth/login', { method:'POST', body:{ identifier, password } }); storeToken(data.token); if(data.user) state.profile = data.user; await loadAuthProfile(); await refreshUserData(); refreshAuthUI(); toast(`Welcome back, ${state.profile?.displayName || state.profile?.username || 'reader'}.`); return true; } catch(err){ toast(err.message || 'Sign-in failed.'); return false; } }
-async function signUp(payload){ try{ const data = await apiFetch('/auth/register', { method:'POST', body: payload }); storeToken(data.token); if(data.user) state.profile = data.user; await loadAuthProfile(); await refreshUserData(); refreshAuthUI(); toast(`Welcome to Vorth, ${state.profile?.displayName || payload.displayName}.`); return true; } catch(err){ toast(err.message || 'Account creation failed.'); return false; } }
+async function signIn(identifier, password){ try{ const data = await apiFetch('/auth/login', { method:'POST', body:{ identifier, password } }); storeToken(data.token); if(data.user) state.profile = data.user; await loadAuthProfile(); await refreshUserData(); refreshAuthUI(); const hint=$('#loginHint'); if(hint){ hint.textContent=''; hint.className='form-hint'; } toast(`Welcome back, ${state.profile?.displayName || state.profile?.username || 'reader'}.`); return true; } catch(err){ toast(showFieldErrors('#loginHint', err)); return false; } }
+async function signUp(payload){ try{ const data = await apiFetch('/auth/register', { method:'POST', body: payload }); storeToken(data.token); if(data.user) state.profile = data.user; await loadAuthProfile(); await refreshUserData(); refreshAuthUI(); const hint=$('#signupHint'); if(hint){ hint.textContent=''; hint.className='form-hint'; } toast(`Welcome to Vorth, ${state.profile?.displayName || payload.displayName}.`); return true; } catch(err){ /* Field-level reasons next to the form; the toast is the fallback for a failure with no visible form. */ toast(showFieldErrors('#signupHint', err)); return false; } }
 async function signOut(){ try{ await apiFetch('/auth/logout', { method:'POST' }); }catch(_){ /* the local session is cleared regardless */ } clearSession(); refreshAuthUI(); toast('Signed out.'); }
 function updateNotifBadge(){ const b=$('#notifBadge'); b.textContent = state.unreadNotifications; b.dataset.zero = state.unreadNotifications===0 ? 'true':'false'; }
 function showView(name){ $all('.view').forEach(v=> v.classList.toggle('active', v.dataset.view===name)); $all('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===name)); window.scrollTo(0,0); closeMobileNav(); if(name==='home') renderHome(); if(name==='browse') renderBrowse(); if(name==='library') renderLibrary(); if(name==='profile') renderProfile(); if(name==='upload') renderUploadSeriesSelect(); }
@@ -463,7 +527,7 @@ function wireAccountForms(){
       hint.className = 'form-hint ok';
     }catch(err){
       hint.textContent = err.message || 'Could not send the reset email.';
-      hint.className = 'form-hint err';
+      hint.className = 'form-hint error';
     }
   });
 
@@ -473,9 +537,9 @@ function wireAccountForms(){
     const newPassword = $('#resetPassword').value;
     const confirm = $('#resetConfirm').value;
     const hint = $('#resetHint');
-    if(!token){ hint.textContent = 'This form needs the token from your reset email.'; hint.className = 'form-hint err'; return; }
-    if(newPassword.length < 8){ hint.textContent = 'Password must be at least 8 characters.'; hint.className = 'form-hint err'; return; }
-    if(newPassword !== confirm){ hint.textContent = 'Passwords do not match.'; hint.className = 'form-hint err'; return; }
+    if(!token){ hint.textContent = 'This form needs the token from your reset email.'; hint.className = 'form-hint error'; return; }
+    if(newPassword.length < 8){ hint.textContent = 'Password must be at least 8 characters.'; hint.className = 'form-hint error'; return; }
+    if(newPassword !== confirm){ hint.textContent = 'Passwords do not match.'; hint.className = 'form-hint error'; return; }
     try{
       const data = await apiFetch('/auth/reset-password', { method:'POST', body:{ token, newPassword } });
       hint.textContent = data.message || 'Password changed. You can sign in now.';
@@ -484,7 +548,7 @@ function wireAccountForms(){
       clearSession(); refreshAuthUI();
     }catch(err){
       hint.textContent = err.message || 'Could not reset your password.';
-      hint.className = 'form-hint err';
+      hint.className = 'form-hint error';
     }
   });
 
@@ -499,7 +563,7 @@ function wireAccountForms(){
     e.preventDefault();
     const token = $('#verifyForm').dataset.token || readQueryToken('token');
     const hint = $('#verifyHint');
-    if(!token){ hint.textContent = 'This form needs the token from your verification email.'; hint.className = 'form-hint err'; return; }
+    if(!token){ hint.textContent = 'This form needs the token from your verification email.'; hint.className = 'form-hint error'; return; }
     try{
       const data = await apiFetch('/auth/verify-email', { method:'POST', body:{ token } });
       hint.textContent = data.message || 'Your email address is verified.';
@@ -507,7 +571,7 @@ function wireAccountForms(){
       await loadAuthProfile();
     }catch(err){
       hint.textContent = err.message || 'That verification link is not valid.';
-      hint.className = 'form-hint err';
+      hint.className = 'form-hint error';
     }
   });
 }

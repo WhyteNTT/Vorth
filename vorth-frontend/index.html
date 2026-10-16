@@ -358,11 +358,23 @@
           <p class="form-hint" id="loginHint"></p>
         </form>
         <form id="signupForm" class="auth-form hidden">
-          <label>Display name<input type="text" id="signupName" required placeholder="How others see you"></label>
-          <label>Username<input type="text" id="signupUsername" required placeholder="Unique, no spaces"></label>
-          <label>Email<input type="email" id="signupEmail" required placeholder="you@example.com"></label>
-          <label>Password<input type="password" id="signupPassword" required placeholder="••••••••"></label>
-          <label>Confirm password<input type="password" id="signupConfirmPassword" required placeholder="••••••••"></label>
+          <!--
+            The constraints below mirror the server's validators exactly, so the
+            browser refuses locally instead of posting something the API will
+            reject. Previously only `required` and type=email were enforced, which
+            let a username with a dot or a 6-character password through the form
+            and returned "Validation failed" with no indication of which field -
+            a message that reads as a broken server rather than a typo.
+
+            Username allows both cases because the server lowercases before it
+            matches; restricting it to lowercase here would reject input the API
+            would have accepted.
+          -->
+          <label>Display name<input type="text" id="signupName" required maxlength="60" placeholder="How others see you"></label>
+          <label>Username<input type="text" id="signupUsername" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" placeholder="Letters, numbers and underscores only"></label>
+          <label>Email<input type="email" id="signupEmail" required maxlength="254" placeholder="you@example.com"></label>
+          <label>Password<input type="password" id="signupPassword" required minlength="8" placeholder="At least 8 characters"></label>
+          <label>Confirm password<input type="password" id="signupConfirmPassword" required minlength="8" placeholder="Repeat your password"></label>
           <label class="upload-file-wrap">
             <span>Profile picture</span>
             <div class="upload-file-picker">
