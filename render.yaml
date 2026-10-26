@@ -113,19 +113,18 @@ services:
       - key: AUTH_RATE_LIMIT_MAX_REQUESTS
         value: '20'
 
-      # 0 = boot and report problems in the log; 1 = refuse to boot on a
-      # configuration error.
+      # 1 = refuse to boot on a configuration error.
       #
-      # This starts at 0 on purpose. A first deploy cannot yet have working mail
-      # or object storage, both of which need credentials that only exist after
-      # the service does, so '1' here would be an immediate crash loop on a
-      # blueprint that is in fact correct.
+      # A first deploy cannot yet have working mail or object storage — both need
+      # credentials that only exist after the service does — so on a brand-new
+      # deployment you may need to temporarily set this to '0' until MAIL_TRANSPORT,
+      # SMTP_*, STORAGE_DRIVER and S3_* are filled in.
       #
-      # Set it to '1' before serving the public. At that point it is the right
-      # setting: the alternative is coming up healthy with password reset that
-      # reaches nobody and uploads that vanish on the next deploy.
+      # Once those are configured it must stay at '1': the alternative is coming up
+      # healthy with password reset that reaches nobody and uploads that vanish on
+      # the next deploy.
       - key: VORTH_STRICT_CONFIG
-        value: '0'
+        value: '1'
 
       # ---- Set these in the dashboard before going public ----
       - key: CLIENT_ORIGINS

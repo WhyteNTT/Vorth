@@ -85,6 +85,32 @@ test('a default production configuration is reported, not silently accepted', ()
   }
 });
 
+test('a typoed MAIL_TRANSPORT is reported as unrecognized, not silently defaulted', () => {
+  // env.js passes through an unrecognized value so preflight can flag it.
+  // Without this, 'smp' would silently become 'console' and password reset
+  // would appear to work in tests but deliver nothing in production.
+  const found = findingsFor({ mailTransport: 'smp' });
+  assert.ok(codes(found, 'error').includes('mail.unrecognized'),
+    `expected mail.unrecognized, got: ${codes(found, 'error').join(', ')}`);
+  // And the recognized values do not trigger it.
+  for (const ok of ['console', 'smtp', 'disabled']) {
+    const f = findingsFor({ mailTransport: ok });
+    assert.ok(!codes(f, 'error').includes('mail.unrecognized'),
+      `mail.unrecognized fired for valid value "${ok}"`);
+  }
+});
+
+test('a typoed STORAGE_DRIVER is reported as unrecognized, not silently defaulted', () => {
+  const found = findingsFor({ storageDriver: 's4' });
+  assert.ok(codes(found, 'error').includes('storage.unrecognized'),
+    `expected storage.unrecognized, got: ${codes(found, 'error').join(', ')}`);
+  for (const ok of ['local', 's3']) {
+    const f = findingsFor({ storageDriver: ok });
+    assert.ok(!codes(f, 'error').includes('storage.unrecognized'),
+      `storage.unrecognized fired for valid value "${ok}"`);
+  }
+});
+
 test('MAIL_TRANSPORT=console is an error in production, a warning otherwise', () => {
   assert.ok(codes(findingsFor({ mailTransport: 'console' }), 'error').includes('mail.console'));
 

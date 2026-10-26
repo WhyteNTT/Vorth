@@ -63,6 +63,12 @@ function inspect(env_ = env) {
   /* ---------------------------------------------------------------- *
    * Mail: the difference between a feature that works and one that does not
    * ---------------------------------------------------------------- */
+  if (!['console', 'smtp', 'disabled'].includes(env_.mailTransport)) {
+    add('error', 'mail.unrecognized',
+      `MAIL_TRANSPORT is "${env_.mailTransport}", which is not one of: console, smtp, disabled. `
+      + 'The value is probably a typo, and was passed through rather than silently defaulted.',
+      'Set MAIL_TRANSPORT to one of: console (dev), smtp (production), disabled (off).');
+  }
   if (env_.mailTransport === 'console') {
     if (production) {
       add('error', 'mail.console',
@@ -100,6 +106,12 @@ function inspect(env_ = env) {
   /* ---------------------------------------------------------------- *
    * Uploads
    * ---------------------------------------------------------------- */
+  if (!['local', 's3'].includes(env_.storageDriver)) {
+    add('error', 'storage.unrecognized',
+      `STORAGE_DRIVER is "${env_.storageDriver}", which is not one of: local, s3. `
+      + 'The value is probably a typo, and was passed through rather than silently defaulted.',
+      'Set STORAGE_DRIVER to one of: local (dev), s3 (production).');
+  }
   if (env_.storageDriver === 'local') {
     if (production) {
       add('error', 'storage.local',

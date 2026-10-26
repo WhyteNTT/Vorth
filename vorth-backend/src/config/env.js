@@ -109,8 +109,21 @@ module.exports = {
   // ---- mail transport ----
   // 'console' logs the message instead of sending it (development default).
   // 'smtp' sends for real; see src/services/mailer.js.
-  mailTransport: ['console', 'smtp', 'disabled'].includes(process.env.MAIL_TRANSPORT)
-    ? process.env.MAIL_TRANSPORT : 'console',
+  // 'disabled' turns mail off entirely (verification cannot work).
+  //
+  // An unset variable falls back to 'console' deliberately — that is the
+  // development default. But a value that is *set* and not one of the three
+  // allowed options is almost certainly a typo (e.g. 'smp' instead of 'smtp'),
+  // and silently falling back to 'console' would mask it: password reset would
+  // appear to work in tests but deliver nothing in production. So a bad value
+  // is preserved as-is and surfaced by preflight as an error, rather than
+  // swallowed.
+  mailTransport: (() => {
+    const raw = process.env.MAIL_TRANSPORT;
+    if (!raw) return 'console';
+    if (['console', 'smtp', 'disabled'].includes(raw)) return raw;
+    return raw; // pass through so preflight can report it as unrecognized
+  })(),
   mailFrom: process.env.MAIL_FROM || 'no-reply@vorth.example',
   smtpHost: process.env.SMTP_HOST || '',
   smtpPort: parseInt(process.env.SMTP_PORT, 10) || 587,
@@ -121,7 +134,17 @@ module.exports = {
   // ---- object storage for uploads ----
   // 'local' writes to uploads/; 's3' targets any S3-compatible service
   // (AWS S3, Cloudflare R2, MinIO, Backblaze B2).
-  storageDriver: process.env.STORAGE_DRIVER === 's3' ? 's3' : 'local',
+  //
+  // Same reasoning as mailTransport: unset defaults to 'local' for
+  // development, but a set value that isn't 's3' or 'local' is a typo and
+  // is passed through so preflight can flag it rather than silently
+  // treating it as 'local'.
+  storageDriver: (() => {
+    const raw = process.env.STORAGE_DRIVER;
+    if (!raw) return 'local';
+    if (raw === 's3' || raw === 'local') return raw;
+    return raw; // pass through so preflight can report it as unrecognized
+  })(),
   s3Bucket: process.env.S3_BUCKET || '',
   s3Region: process.env.S3_REGION || 'auto',
   s3Endpoint: process.env.S3_ENDPOINT || '',
