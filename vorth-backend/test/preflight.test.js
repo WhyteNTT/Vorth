@@ -192,13 +192,6 @@ test('TRUST_PROXY is informational, not a warning', () => {
   assert.ok(preflight.report(trusted, { includeInfo: true }).includes('proxy.trust'));
 });
 
-test('the placeholder DMCA address is flagged in production', () => {
-  assert.ok(codes(findingsFor({ dmcaContactEmail: 'dmca@example.com' }), 'warn')
-    .includes('legal.dmca-placeholder'));
-  assert.ok(!codes(findingsFor({ dmcaContactEmail: 'abuse@vorth.example' }), 'warn')
-    .includes('legal.dmca-placeholder'));
-});
-
 test('VORTH_SKIP_SCHEMA in production is called out', () => {
   /*
    * A warning, not an error: it is legitimate during a rolling deploy, where the

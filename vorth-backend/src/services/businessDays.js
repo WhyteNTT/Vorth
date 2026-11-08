@@ -1,23 +1,13 @@
 'use strict';
 
 /**
- * Business-day arithmetic for the DMCA counter-notice window.
+ * Business-day arithmetic.
  *
- * 17 U.S.C. 512(g)(2)(C) gives the original complainant 10 to 14 *business
- * days* from the day the counter-notice is forwarded to notify the service
- * provider that it has filed a court action. If it does not, the provider may
- * restore the removed material.
- *
- * Two things worth being explicit about:
- *
- *   - "business days" excludes weekends. Public holidays are NOT excluded.
- *     Counting them properly needs an authoritative holiday calendar per
- *     jurisdiction, and a wrong one silently shifts a statutory deadline in the
- *     direction that is worse for the complainant. Weekends only is the
- *     conservative choice: the deadline lands later rather than earlier. A
- *     deployment that needs holidays should pass them in.
- *   - the count starts the day AFTER the forwarded date. Day zero is not a day
- *     the complainant gets to act on.
+ * Adds and counts business days (excluding weekends). Public holidays are NOT
+ * excluded by default: counting them properly needs an authoritative holiday
+ * calendar per jurisdiction, and a wrong one silently shifts a deadline.
+ * Weekends only is the conservative choice: the deadline lands later rather
+ * than earlier. A caller that needs holidays should pass them in.
  */
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -94,18 +84,9 @@ function businessDaysBetween(from, to) {
   return days;
 }
 
-/**
- * The statutory window: forward date plus 10 business days, the earliest
- * point at which restoration may be permitted.
- */
-function counterNoticeDeadline(forwardedAt, { businessDays = 10, holidays } = {}) {
-  return addBusinessDays(forwardedAt, businessDays, holidays);
-}
-
 module.exports = {
   addBusinessDays,
   businessDaysBetween,
-  counterNoticeDeadline,
   isWeekend,
   startOfDay,
   isoDay,

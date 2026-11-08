@@ -183,7 +183,6 @@ test('every limit falls back to its documented default', () => {
   const cfg = readConfig(BASE);
   assert.equal(cfg.rateLimitMaxRequests, 300);
   assert.equal(cfg.authRateLimitMaxRequests, 20);
-  assert.equal(cfg.dmcaRateLimitMaxRequests, 5);
   assert.equal(cfg.uploadRateLimitMaxRequests, 10);
   assert.equal(cfg.rateLimitWindowMinutes, 15);
   assert.equal(cfg.maxUploadMb, 8);

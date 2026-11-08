@@ -6,7 +6,7 @@ an Express/PostgreSQL backend.
 ## Project layout
 
 - [`vorth-backend/`](./vorth-backend/) - Node.js API, authentication, catalog,
-  uploads, moderation, and legal/DMCA endpoints. Auth: JWT bearer tokens with
+  uploads, moderation, and legal endpoints. Auth: JWT bearer tokens with
   rotating refresh cookies. Data: PostgreSQL via `pg`.
 - [`vorth-frontend/`](./vorth-frontend/) - static browser frontend. No build
   step; plain ES2020 plus one helper module (`lib/safe.js`).

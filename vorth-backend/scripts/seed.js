@@ -129,7 +129,6 @@ async function wipeCatalog() {
     await client.query('DELETE FROM comments');
     await client.query('DELETE FROM view_events');
     await client.query('DELETE FROM chapters');
-    await client.query('DELETE FROM dmca_reports');
     await client.query('DELETE FROM series');
     await client.query('DELETE FROM refresh_tokens');
     await client.query('DELETE FROM auth_tokens');

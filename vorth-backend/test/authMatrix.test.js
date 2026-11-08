@@ -223,17 +223,6 @@ const REVIEWED = {
   'POST /api/uploads/pages': 'authenticated',
   'GET /api/uploads/:key': 'public',
 
-  // --- copyright claims
-  'POST /api/dmca': 'public',
-  'POST /api/dmca/:id/counter-notice': 'public',
-  'GET /api/dmca/mine': 'authenticated',
-  'GET /api/dmca': 'admin',
-  'GET /api/dmca/:id': 'admin',
-  'PATCH /api/dmca/:id': 'admin',
-  'GET /api/dmca/counter-notices': 'admin',
-  'GET /api/dmca/counter-notices/:id': 'admin',
-  'PATCH /api/dmca/counter-notices/:id': 'admin',
-
   // --- content policy reports
   'POST /api/reports': 'public',
   'GET /api/reports': 'admin',
@@ -275,7 +264,7 @@ test('the router mounts are all resolvable to a file on disk', () => {
   // If a mount names a router this cannot find, every route under it silently
   // drops out of the matrix and the check below passes over a hole.
   const mounts = mountPoints().filter((m) => !m.inline);
-  assert.ok(mounts.length >= 12, `only ${mounts.length} mounts found; the regex probably broke`);
+  assert.ok(mounts.length >= 11, `only ${mounts.length} mounts found; the regex probably broke`);
   for (const { prefix, router } of mounts) {
     assert.ok(fs.existsSync(path.join(ROUTES, `${router}.js`)),
       `routes/index.js mounts "${router}" at "${prefix}" but src/routes/${router}.js does not exist`);
@@ -341,8 +330,6 @@ const PUBLIC_WRITES_JUSTIFIED = new Set([
   'POST /api/auth/reset-password',
   'POST /api/auth/verify-email',
   'POST /api/reports',
-  'POST /api/dmca',
-  'POST /api/dmca/:id/counter-notice',
 ]);
 
 test('a route that mutates state and is public is justified in writing', () => {

@@ -13,9 +13,6 @@ router.use('/library', require('./libraryRoutes'));
 router.use('/progress', require('./progressRoutes'));
 router.use('/notifications', require('./notificationRoutes'));
 router.use('/uploads', require('./uploadRoutes'));
-router.use('/dmca', require('./dmcaRoutes'));
-// Content Policy reports, kept separate from DMCA: one is a house rule, the
-// other is a copyright claim with statutory weight.
 router.use('/reports', require('./reportRoutes'));
 router.use('/admin', require('./adminRoutes'));
 router.use('/legal', require('./legalRoutes'));

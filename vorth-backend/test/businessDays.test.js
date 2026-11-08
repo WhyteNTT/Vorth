@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Business-day arithmetic for the DMCA counter-notice window.
+ * Business-day arithmetic.
  *
  * The date maths is checked against dates worked out by hand rather than by
  * re-implementing the implementation. Every case below names the expected day.
@@ -16,7 +16,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  addBusinessDays, businessDaysBetween, counterNoticeDeadline, isWeekend, startOfDay,
+  addBusinessDays, businessDaysBetween, isWeekend, startOfDay,
 } = require('../src/services/businessDays');
 
 test('a weekday plus one business day is the next weekday', () => {
@@ -96,16 +96,7 @@ test('days between counts weekdays only', () => {
   assert.ok(businessDaysBetween('2026-03-09T00:00:00Z', new Date()) >= 0);
 });
 
-test('the deadline helper defaults to the earliest statutory bound', () => {
-  assert.equal(
-    counterNoticeDeadline('2026-03-06').toISOString().slice(0, 10),
-    '2026-03-20',
-  );
-  assert.equal(
-    counterNoticeDeadline('2026-03-06', { businessDays: 14 }).toISOString().slice(0, 10),
-    '2026-03-26',
-  );
-});
+
 
 test('weekend detection is in UTC', () => {
   assert.equal(isWeekend(new Date('2026-03-07T12:00:00Z')), true);

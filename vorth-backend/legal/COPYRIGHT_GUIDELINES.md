@@ -1,7 +1,7 @@
 # Vorth — Copyright Guidelines
 
 **Status: TEMPLATE — not reviewed by an attorney.** A plain-language
-companion to the DMCA Policy, aimed at helping creators and readers
+companion to the Content Policy, aimed at helping creators and readers
 understand what's expected of them. Have it reviewed alongside the
 other legal documents before publishing.
 
@@ -35,8 +35,9 @@ that means:
 
 ## What happens if you publish something you don't have rights to
 
-- The rights holder can file a DMCA takedown notice (see DMCA
-  Policy), which will result in the content being removed.
+- The rights holder can file a content report for copyright or
+  trademark infringement (see Content Policy), which will result in
+  the content being reviewed and potentially removed.
 - Repeat infringement can result in account termination.
 - You may be personally liable to the rights holder independent of
   anything Vorth does — removing the content does not resolve any
@@ -48,8 +49,9 @@ that means:
   creators. Downloading a chapter for offline reading within the app
   is permitted; redistributing, reposting, or republishing content
   from Vorth elsewhere without the creator's permission is not.
-- If you believe something on Vorth infringes your copyright, see the
-  DMCA Policy for how to file a notice.
+- If you believe something on Vorth infringes your copyright, file a
+  content report under the `copyright_or_trademark` category (see
+  Content Policy for details).
 
 ## Trademarks
 

@@ -16,8 +16,8 @@ _Last updated: [DATE]_
 ## 1. Acceptance of these terms
 
 By creating an account or using Vorth ("the Service"), you agree to
-these Terms of Service ("Terms") and to our Privacy Policy, DMCA
-Policy, and Content Policy, which are incorporated by reference. If
+these Terms of Service ("Terms") and to our Privacy Policy, and
+Content Policy, which are incorporated by reference. If
 you do not agree, do not use the Service.
 
 ## 2. Eligibility
@@ -79,11 +79,12 @@ You agree not to:
 - Use the Service to harass, abuse, or harm another person, including
   minors.
 
-## 7. Copyright & DMCA
+## 7. Copyright
 
-Vorth responds to valid takedown notices under the Digital Millennium
-Copyright Act (or equivalent local law). See our **DMCA Policy** for
-the full process. Repeat infringers' accounts will be terminated.
+You must not publish content that infringes another party's copyright or
+trademark. Copyright and trademark claims can be filed through our content
+report system (see Content Policy). Repeat infringers' accounts will be
+terminated.
 
 ## 8. Termination
 
@@ -100,7 +101,7 @@ EXPRESS OR IMPLIED. Vorth does not pre-screen all Creator Content and
 is not responsible for the accuracy, legality, or appropriateness of
 content published by users. [Add jurisdiction-specific disclaimer
 language and, if applicable, safe-harbor / intermediary-liability
-language relevant to your jurisdiction — e.g. DMCA §512, EU DSA.]
+language relevant to your jurisdiction — e.g. EU DSA.]
 
 ## 10. Limitation of liability
 

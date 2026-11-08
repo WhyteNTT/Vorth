@@ -5,12 +5,10 @@ platform. The catalog starts **empty** — run `npm run db:seed -- --confirm`
 if you want demo content.
 
 > **Legal notice:** the `/legal` folder contains *template* Terms of
-> Service, Privacy Policy, DMCA Policy, Copyright Guidelines, and
-> Content Policy documents. They are functionally complete drafts,
-> not legal advice, and have not been reviewed by an attorney. Have
-> them reviewed by counsel — and register a DMCA designated agent
-> with the U.S. Copyright Office — before operating this publicly.
-> See `legal/DMCA_POLICY.md` for details.
+> Service, Privacy Policy, Copyright Guidelines, and Content Policy
+> documents. They are functionally complete drafts, not legal advice, and
+> have not been reviewed by an attorney. Have them reviewed by counsel
+> before operating this publicly.
 
 ## 1. Setup
 
@@ -39,18 +37,6 @@ npm run db:inspect             # print row counts (read-only)
 `db:seed` is idempotent and refuses to run against `NODE_ENV=production`
 without `FORCE=1`. Every demo account shares the password `vorthdemo123`, so
 change or delete them before opening the site publicly.
-
-```bash
-npm run dmca:sweep-lapsed -- --dry-run   # what a restoration sweep would do
-npm run dmca:sweep-lapsed                # restore content whose window lapsed
-```
-
-The sweep runs `connectDB()`, so it refuses a managed production database
-unless `VORTH_ALLOW_SCHEMA_ON_PRODUCTION=1`. It is not scheduled on purpose:
-§512(g)(2)(C) makes restoration permissive, and a job that fires unattended
-could re-expose content a court order is keeping down. Always dry-run first —
-it reports, per notice, both what it would put back and what it would leave
-down and why.
 
 ### Deploying
 
@@ -81,11 +67,11 @@ src/
     _sql.js                Mongo-style filter/sort/update -> parameterised SQL
     _base.js               find/populate/save/deleteMany/aggregate
     User, Series, Chapter, Comment, ReadingProgress, Notification,
-    DMCAReport, DMCACounterNotice, RefreshToken, AuthToken
+    RefreshToken, AuthToken
   services/
     views.js                idempotent view counting
     uploads.js              orphan-upload pruning
-    businessDays.js         business-day arithmetic for the DMCA response window
+    businessDays.js         business-day arithmetic
     storage.js              local / S3-compatible upload drivers
     mailer.js                console / SMTP email transport
   controllers/              request handlers, one file per resource
@@ -101,7 +87,7 @@ src/
   utils/                     asyncHandler, ApiError, generateToken, validate
 scripts/
   wipeDatabase.js            clears Series/Chapter (and optionally Comment/User) collections
-legal/                       Terms, Privacy, DMCA, Copyright, Content Policy templates
+legal/                       Terms, Privacy, Copyright, Content Policy templates
 uploads/                     uploaded cover images & comic pages (served at /uploads/*)
 ```
 
@@ -303,14 +289,6 @@ Base URL: `/api`
 | POST | `/uploads/cover` | multipart field `cover` → `{ path }` |
 | POST | `/uploads/pages` | multipart field `pages` (multiple) → `{ paths[] }` |
 
-### DMCA — `/dmca`
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/dmca` | — (public) | File a takedown notice |
-| GET | `/dmca` | admin | List reports |
-| GET | `/dmca/:id` | admin | Report detail |
-| PATCH | `/dmca/:id` | admin | Resolve: `status(under_review|accepted|rejected), adminNotes?` — `accepted` soft-removes the target content |
-
 ### Admin — `/admin` (admin role required)
 | Method | Path | Description |
 |---|---|---|
@@ -324,7 +302,7 @@ Base URL: `/api`
 | Method | Path | Description |
 |---|---|---|
 | GET | `/legal` | List available documents |
-| GET | `/legal/:doc` | Serves `terms`, `privacy`, `dmca`, `copyright`, or `content` as markdown |
+| GET | `/legal/:doc` | Serves `terms`, `privacy`, `copyright`, or `content` as markdown |
 
 ### Health
 `GET /api/health` → `{ success, status: 'ok', time }`
@@ -365,7 +343,7 @@ npm run test:coverage # the above, with a line/branch/function report
 | `test:browser:ci` | network access | the same, installing Chromium with its system dependencies first |
 | `test:live` | PostgreSQL | every query against a real database |
 | `test:shutdown` | PostgreSQL + a POSIX signal | that SIGTERM drains, closes the pool and stops the jobs rather than waiting to be killed. Skipped on Windows, which cannot deliver a signal to a child process, and skipped without `VORTH_LIVE_DB=1`, because server.js exits during startup when it cannot reach a database |
-| `test:e2e` | PostgreSQL + Chromium | sign-up, publish, read, save, copyright claims, page weight |
+| `test:e2e` | PostgreSQL + Chromium | sign-up, publish, read, save, page weight |
 | `test:coverage` | nothing | `test`, plus line/branch/function coverage of `src/` |
 | `smoke` | nothing | `require()` every module |
 | `lint` | nothing | ESLint |
@@ -407,8 +385,6 @@ What each area covers within those scripts:
 | `models` | dirty tracking, batched populate, `deleteMany` filters, single-statement writes, atomic upsert, password stripping |
 | `aggregate` | grouping by any column, compound keys, and the ungrouped case |
 | `businessDays` | business-day arithmetic, against dates worked out by hand |
-| `counterNotice` | the counter-notice flow: statutory statements, forwarded text, route ordering |
-| `claims` | the publisher-facing claim markup, including that it escapes |
 | `configDrift` | `.env.example` completeness, schema/model/verifier agreement, asset budgets |
 | `nullFilter` | `$ne: null` and `$nin: [null]`, which compile to predicates matching nothing if wrong |
 | `columnUpgrade` | that boot repairs a schema missing a column, and issues no `ALTER` when it does not |
@@ -590,42 +566,7 @@ credential-shaped value of its own, so it cannot quietly come back.
 ## 9. Known limitations / what's next
 
 - **No payment/monetization** — out of scope for this pass.
-  Content Policy violations — only DMCA has a formal intake right now.
-- **DMCA counter-notices are implemented but not legally reviewed.** The flow is
-  real, end to end:
-
-  | Endpoint | Who | What |
-  |---|---|---|
-  | `POST /api/dmca` | anyone | file a takedown notice |
-  | `GET /api/dmca/mine` | the publisher | takedowns against your own content, and the route to contest one |
-  | `POST /api/dmca/:id/counter-notice` | anyone | contest an accepted takedown; captures the four §512(g)(3) statements and forwards them to the complainant |
-  | `GET /api/dmca/counter-notices` | admin | the counter-notice queue |
-  | `PATCH /api/dmca/counter-notices/:id` | admin | record a court action, a restoration, or a withdrawal |
-
-  Accepting a takedown notifies the publisher, and the profile panel lists their
-  claims with the response window. That window starts at 10 business days from
-  the forward — the earliest bound §512(g)(2)(C) allows, so the clock only runs in
-  the complainant's favour — and when it lapses the material may be restored via
-  `npm run dmca:sweep-lapsed`.
-
-  Restoration is deliberately *not* automatic: it is an operator-run sweep, and
-  it only puts back content still removed because of *that* notice, so a moderator
-  removal, a Content Policy report or a court order is never undone. The sweep
-  reports what it declined to restore and why, because a sweep that restored
-  nothing must not be mistakable for one with nothing to do. The sweep is
-  batched: it takes at most `SWEEP_BATCH` (200) notices per pass and processes
-  each independently, so a large backlog clears over several runs and a partly
-  failing batch still advances.
-
-  Before relying on any of it in production, have counsel review the process and
-  register a DMCA designated agent with the U.S. Copyright Office. Public
-  holidays are excluded from the window only if `DMCA_COUNTER_NOTICE_HOLIDAYS` is
-  configured; weekends always are.
-- **A removal recorded before `takedown_reason` existed cannot be restored
-  automatically.** The guard that decides what a counter-notice may put back
-  reads that column. Rows removed by a takedown accepted before this column was
-  added have a null reason, so they are treated as "not ours" and stay down. That
-  is the safe direction, but those need a deliberate backfill by an operator.
+  Content Policy violations — no formal intake exists yet.
 - **Search** is an indexed tsvector over title, author, artist and synopsis,
   with stemming, weighted relevance ranking and a GIN index. A substring
   second pass runs when the indexed pass finds nothing, so partial words

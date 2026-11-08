@@ -13,7 +13,7 @@ const { pool, connectDB } = require('../src/config/db');
 
 const REQUIRED_TABLES = [
   'users', 'series', 'chapters', 'comments', 'notifications',
-  'reading_progress', 'dmca_reports',
+  'reading_progress',
   'view_events', 'refresh_tokens', 'auth_tokens', 'rate_limit_buckets',
 ];
 

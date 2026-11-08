@@ -5,9 +5,9 @@
  *
  * Unbounded list reads are the quiet kind of problem: every one of them works
  * perfectly at the size the data happens to be today, and the response grows
- * until the page stops loading or the process runs out of memory. Three of the
- * queues this applies to only ever grow - one row per claim, per report, per
- * counter notice - so "today's size" is not a stable property of them.
+ * until the page stops loading or the process runs out of memory. The queues
+ * this applies to only ever grow - one row per report - so "today's size" is
+ * not a stable property of them.
  *
  * The ceiling is deliberately a ceiling and not a page size. These endpoints have
  * no pagination contract with the client and no total count, so returning a

@@ -53,7 +53,6 @@ function limits() {
   return {
     general: env.rateLimitMaxRequests,
     auth: env.authRateLimitMaxRequests,
-    dmca: env.dmcaRateLimitMaxRequests,
     upload: env.uploadRateLimitMaxRequests,
     windowMinutes: env.rateLimitWindowMinutes,
     maxUploadMb: env.maxUploadMb,
@@ -167,20 +166,6 @@ test('the upload class is limited to what a real chapter needs, not to the gener
     + 'a chapter and correct a mistake without waiting out the window');
 });
 
-test('unauthenticated routes that cost more than a row read have a tighter limit', () => {
-  const { general, auth, dmca } = limits();
-
-  // Each of these is reachable by a stranger and each does more than one cheap
-  // thing per call: the auth routes are the credential-stuffing surface, the DMCA
-  // routes send email to an address the caller chooses.
-  assert.ok(auth < general,
-    `the auth limit (${auth}) is not tighter than the general limit (${general}); `
-    + 'credential stuffing is then limited no harder than browsing');
-  assert.ok(dmca < general,
-    `the DMCA limit (${dmca}) is not tighter than the general limit (${general}); `
-    + 'sending mail to arbitrary addresses is then limited no harder than browsing');
-});
-
 /* ================================================================== *
  * 3. The limiters actually reach the routes
  * ================================================================== */
@@ -199,18 +184,6 @@ test('the upload routes carry the upload limiter', () => {
   for (const { key, limiter } of uploads.filter((u) => u.key.includes('POST'))) {
     assert.equal(limiter, 'uploadLimiter',
       `${key} is behind ${limiter}, not uploadLimiter; the POSTs are what write to disk`);
-  }
-});
-
-test('the unauthenticated DMCA routes carry the DMCA limiter', () => {
-  const perRoute = perRouteLimiters();
-  const dmcaPosts = [...perRoute.entries()]
-    .filter(([key]) => key.startsWith('dmcaRoutes:POST'))
-    .map(([, limiter]) => limiter);
-
-  assert.ok(dmcaPosts.length >= 2, `expected both DMCA intake routes, found ${dmcaPosts.length}`);
-  for (const limiter of dmcaPosts) {
-    assert.equal(limiter, 'dmcaLimiter', `a DMCA intake route is behind ${limiter}`);
   }
 });
 
@@ -257,7 +230,7 @@ test('every limiter is keyed by address, and none of them by account', () => {
    */
   const blocks = limiterBlocks();
 
-  assert.ok(blocks.size >= 5,
+  assert.ok(blocks.size >= 4,
     `expected every limiter to be defined through limiterFor, found ${blocks.size}: `
     + `${[...blocks.keys()].join(', ')}`);
 
@@ -287,7 +260,6 @@ test('every test that exercises a limited route raises that limiter', () => {
   const LIMITERS = {
     authLimiter: 'AUTH_RATE_LIMIT_MAX_REQUESTS',
     uploadLimiter: 'UPLOAD_RATE_LIMIT_MAX_REQUESTS',
-    dmcaLimiter: 'DMCA_RATE_LIMIT_MAX_REQUESTS',
   };
 
   const perRoute = perRouteLimiters();
@@ -357,7 +329,7 @@ function limitedRoutes() {
    */
   const byFile = limitedRoutes();
 
-  assert.ok(byFile.size >= 3,
+  assert.ok(byFile.size >= 2,
     `expected several rate-limited route files, found ${byFile.size}: ${[...byFile.keys()].join(', ')}`);
 
   const misses = [];

@@ -43,29 +43,9 @@ const EXEMPT = [
       + 'Capping it would drop a heavy reader\'s history, which is the feature',
   },
   {
-    file: 'dmcaCounterNoticeController.js',
-    match: /Series\.find\(\{ owner: req\.user\.id \}\)/,
-    why: 'the caller\'s own series, and the next read is bounded by their ids',
-  },
-  {
-    file: 'dmcaCounterNoticeController.js',
-    match: /Chapter\.find\(\{ series: \{ \$in: seriesIds \} \}\)/,
-    why: 'chapters of the caller\'s own series; a publisher\'s back catalogue, not a queue',
-  },
-  {
-    file: 'dmcaCounterNoticeController.js',
-    match: /DMCACounterNotice\.find\(\{ dmcaReport: \{ \$in: reportIds \} \}\)/,
-    why: 'counter notices against a bounded set of the caller\'s own reports',
-  },
-  {
     file: 'libraryController.js',
     match: /Chapter\.find\(\{ id: \{ \$in: chapterIds \}/,
     why: 'the caller\'s own offline downloads',
-  },
-  {
-    file: 'dmcaCounterNoticeController.js',
-    match: /DMCAReport\.find\(\{ status: 'accepted'/,
-    why: 'reports the caller owns, already narrowed by series they published',
   },
 ];
 

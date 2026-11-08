@@ -28,10 +28,6 @@
 # arriving (see src/services/heartbeat.js):
 #
 #   KEEP_WARM_TOKEN       guards GET /api/keep-warm/status.
-#
-# Separately, and not a configuration matter: register a DMCA designated agent
-# with the U.S. Copyright Office before operating publicly. It takes days, and
-# the takedown process in legal/DMCA_POLICY.md is incomplete without it.
 
 services:
   - type: web
@@ -131,8 +127,6 @@ services:
         sync: false
       - key: PUBLIC_URL
         sync: false
-      - key: DMCA_CONTACT_EMAIL
-        sync: false
       - key: SUPPORT_CONTACT_EMAIL
         sync: false
       # Guards GET /api/keep-warm/status. Any random string; unset means that
@@ -140,12 +134,6 @@ services:
       # anyone who asks. Set once the keep-warm monitor is running.
       - key: KEEP_WARM_TOKEN
         sync: false
-      # DMCA counter-notice response window, in business days. 10 to 14; values
-      # outside that are clamped. Defaults to 10, the earliest the statute
-      # allows, so the clock only runs in the complainant's favour.
-      - key: DMCA_COUNTER_NOTICE_DAYS
-        value: '10'
-
       # Mail. Unset is treated as an error in production, which is the point:
       # the alternative is shipping password reset that cannot work.
       - key: MAIL_TRANSPORT

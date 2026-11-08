@@ -31,7 +31,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createFakePool } = require('./helpers/fakePool');
-const { _applyColumnUpgrades, _columnUpgrades } = require('../src/config/db');
+const { _applyColumnUpgrades, _columnUpgrades, NULLABILITY_RELAXATIONS } = require('../src/config/db');
 
 /**
  * A pool whose information_schema answers come from `lookup`, and which still
@@ -83,7 +83,7 @@ test('only catalog reads happen on the fast path', async () => {
   await _applyColumnUpgrades(pool);
 
   // One SELECT per column, plus one per nullability relaxation. No locks at all.
-  assert.equal(pool.log.length, _columnUpgrades.length + 1);
+  assert.equal(pool.log.length, _columnUpgrades.length + NULLABILITY_RELAXATIONS.length);
   assert.ok(
     pool.log.every((e) => /information_schema\.columns/.test(e.sql)),
     'the fast path issued something other than a catalog read'
@@ -118,28 +118,6 @@ test('a missing column is added', async () => {
     !issued.some((a) => /"users"/.test(a.sql)),
     'an ALTER was issued for a column that already exists'
   );
-});
-
-test('a NOT NULL column is relaxed only when it is still NOT NULL', async () => {
-  let nullable = 'NO';
-  const pool = poolAnswering((params) => ({
-    rows: [{ is_nullable: params[0] === 'dmca_counter_notices' ? nullable : 'YES' }],
-    rowCount: 1,
-  }));
-
-  const first = await _applyColumnUpgrades(pool);
-  assert.equal(first.skipped, false);
-  assert.ok(
-    first.applied.some((a) => /dmca_counter_notices\.response_deadline is now nullable/.test(a)),
-    JSON.stringify(first.applied)
-  );
-
-  // Second pass, as if the column had already been relaxed: no further ALTER.
-  nullable = 'YES';
-  pool.log.length = 0;
-  const second = await _applyColumnUpgrades(pool);
-  assert.equal(second.skipped, true);
-  assert.deepEqual(alters(pool), []);
 });
 
 test('the upgrade step runs after the schema, never before it', async () => {

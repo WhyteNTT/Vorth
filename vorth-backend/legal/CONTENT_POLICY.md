@@ -7,8 +7,7 @@ launch.
 _Last updated: [DATE]_
 
 This policy covers what may and may not be published or posted on
-Vorth, separate from copyright (see Copyright Guidelines and DMCA
-Policy).
+Vorth, separate from copyright (see Copyright Guidelines).
 
 ## 1. Prohibited content
 
@@ -81,12 +80,10 @@ section 1:
 No account is required. Supplying an email address is optional, but it is how
 we tell you the outcome.
 
-**Copyright and trademark claims have a separate, formal route.** Use the DMCA
-notice at `POST /api/dmca` instead. That form carries the statutory elements -
-good-faith and accuracy statements, and a signature - which a policy report does
-not ask for and cannot act on. A report filed under
-`copyright_or_trademark` is triaged and then routed to that formal process; it
-is not a substitute for it.
+**Copyright and trademark claims should be filed through the content report
+system.** Use `POST /api/reports` with the `copyright_or_trademark` category.
+A report filed under `copyright_or_trademark` will be triaged and may result
+in removal of the infringing content.
 
 
 ## 5. Appeals
@@ -96,5 +93,5 @@ timeline for review.]
 
 ## 6. Relationship to other policies
 
-This Content Policy works alongside the Terms of Service, Copyright
-Guidelines, and DMCA Policy. Where they overlap, all apply.
+This Content Policy works alongside the Terms of Service and Copyright
+Guidelines. Where they overlap, all apply.

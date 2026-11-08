@@ -35,8 +35,7 @@ const unbanUser = asyncHandler(async (req, res) => {
   res.json({ success: true, message: `${user.username} has been reinstated.` });
 });
 
-// DELETE /api/admin/series/:id — moderation removal outside the DMCA flow
-// (e.g. ToS violations unrelated to copyright).
+// DELETE /api/admin/series/:id — moderation removal (e.g. ToS violations).
 const removeSeries = asyncHandler(async (req, res) => {
   const series = await Series.findById(req.params.id);
   if (!series) throw ApiError.notFound('Series not found.');

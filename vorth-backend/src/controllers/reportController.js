@@ -12,10 +12,10 @@ const { pageSize } = require('../utils/pagination');
 /**
  * POST /api/reports — public, no auth required.
  *
- * The documented route for the Content Policy. Deliberately lighter than the
- * DMCA intake: no sworn statements and no signature, because those are
- * statutory formalities for a copyright notice and asking for them here would
- * discourage exactly the reports the policy exists to receive.
+ * The documented route for the Content Policy. No sworn statements and no
+ * signature, because those are statutory formalities for a copyright notice
+ * and asking for them here would discourage exactly the reports the policy
+ * exists to receive.
  *
  * The category is a closed list rather than free text so it can be counted and
  * triaged. It mirrors the headings in legal/CONTENT_POLICY.md; adding one there
@@ -109,7 +109,7 @@ const list = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.category) filter.category = req.query.category;
-  // Bounded for the same reason as the DMCA queue: it only grows.
+  // Bounded for the same reason: it only grows.
     const reports = await ContentReport.find(filter)
       .sort({ createdAt: -1 })
       .limit(pageSize(req)).exec();
@@ -182,8 +182,8 @@ const resolve = [
         if ((wantsAll || actsOn === 'chapter') && report.reportedChapter) {
           await Chapter.findByIdAndUpdate(report.reportedChapter, {
             isRemoved: true,
-            // A reason, so a DMCA counter-notice restoring a *different*
-            // removal cannot un-hide a Content Policy removal by accident.
+            // A reason, so a restore of a *different* removal cannot un-hide
+            // a Content Policy removal by accident.
             takedownReason: reason,
           }, { client });
         }

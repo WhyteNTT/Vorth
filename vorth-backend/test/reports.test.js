@@ -81,7 +81,7 @@ test('the policy documents the endpoint and separates it from DMCA', () => {
   );
 
   assert.match(policy, /POST \/api\/reports/, 'the policy does not document the endpoint');
-  assert.match(policy, /POST \/api\/dmca/, 'the policy does not point copyright claims elsewhere');
+  assert.ok(!policy.includes('/api/dmca'), 'the policy no longer points copyright claims to a removed DMCA endpoint');
   assert.ok(!/needs to\s*\n?\s*be built/i.test(policy),
     'the policy still says the reporting endpoint needs building');
   for (const c of CATEGORIES) {

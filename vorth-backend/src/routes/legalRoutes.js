@@ -10,7 +10,6 @@ const LEGAL_DIR = path.join(__dirname, '..', '..', 'legal');
 const DOCS = {
   terms: 'TERMS_OF_SERVICE.md',
   privacy: 'PRIVACY_POLICY.md',
-  dmca: 'DMCA_POLICY.md',
   copyright: 'COPYRIGHT_GUIDELINES.md',
   content: 'CONTENT_POLICY.md',
 };

@@ -214,16 +214,6 @@ function inspect(env_ = env) {
   }
 
   /* ---------------------------------------------------------------- *
-   * Legal
-   * ---------------------------------------------------------------- */
-  if (production && env_.dmcaContactEmail.endsWith('@example.com')) {
-    add('warn', 'legal.dmca-placeholder',
-      `DMCA_CONTACT_EMAIL is still the placeholder "${env_.dmcaContactEmail}".`,
-      'Set a monitored address, and register a DMCA designated agent with the U.S. Copyright '
-      + 'Office before accepting takedown requests.');
-  }
-
-  /* ---------------------------------------------------------------- *
    * Schema
    * ---------------------------------------------------------------- */
   /*

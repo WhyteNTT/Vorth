@@ -38,7 +38,6 @@ function invoke(handler, req) {
 
 const adminController = require('../src/controllers/adminController');
 const libraryController = require('../src/controllers/libraryController');
-const dmcaController = require('../src/controllers/dmcaController');
 
 /* ------------------------------------------------------------------ *
  * GET /api/admin/users leaked bcrypt hashes.
@@ -189,29 +188,4 @@ test('library: saving the same series twice does not duplicate it', async () => 
 // Param validation (isUUID etc.) is exercised in test/http.test.js, where the
 // real express-validator chain and error handler run.
 
-/* ------------------------------------------------------------------ *
- * DMCA intake passed req.body straight into an INSERT.
- * ------------------------------------------------------------------ */
-test('dmca: submit only inserts whitelisted columns', async () => {
-  const fake = createFakePool({ rows: { chapters: [], series: [] } });
-  await withPool(fake, async () => {
-    const req = {
-      body: {
-        reporterName: 'R', reporterEmail: 'r@example.com',
-        copyrightedWorkDescription: 'a novel', signature: 'R',
-        goodFaithStatement: 'true', accuracyStatement: 'true',
-        // Smuggled fields the schema does not have:
-        status: 'accepted', resolvedBy: 'u1', role: 'admin', is_removed: false,
-      },
-    };
-    const { res: out } = await invoke(dmcaController.submit[dmcaController.submit.length - 1], req);
-    assert.equal(out.statusCode, 201);
-    const insert = fake.log.find((e) => e.verb === 'INSERT');
-    assert.ok(insert, 'expected an INSERT');
-    for (const forbidden of ['status', 'resolved_by', 'role', 'is_removed']) {
-      assert.ok(!insert.sql.includes(`"${forbidden}"`),
-        `smuggled column "${forbidden}" reached the INSERT: ${insert.sql}`);
-    }
-    assert.ok(insert.sql.includes('"reporter_name"'));
-  });
-});
+

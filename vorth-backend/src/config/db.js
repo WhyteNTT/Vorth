@@ -71,27 +71,8 @@ const COLUMN_UPGRADES = [
     'takedown_reason',
     'text',
     'Why the chapter is removed. is_removed says *that* it is down; without this a '
-    + 'DMCA counter-notice cannot tell a chapter it removed from one an admin or a '
-    + 'court order removed since, and restoring the first would un-hide the second.',
-  ],
-  [
-    'dmca_reports',
-    'removal_series',
-    'uuid REFERENCES series(id)',
-    'The series this takedown actually removed, so a counter-notice knows what to '
-    + 'restore. Set when a takedown is accepted.',
-  ],
-  [
-    'dmca_reports',
-    'removal_chapter',
-    'uuid REFERENCES chapters(id)',
-    'The chapter this takedown actually removed.',
-  ],
-  [
-    'dmca_reports',
-    'removal_at',
-    'timestamptz',
-    'When the takedown removed something.',
+    + 'restore cannot tell a chapter taken down by one reason from one taken down by '
+    + 'another since, and restoring the first would un-hide the second.',
   ],
 ];
 
@@ -104,14 +85,6 @@ const COLUMN_UPGRADES = [
  * desired state first. On a database created by this version it never fires.
  */
 const NULLABILITY_RELAXATIONS = [
-  [
-    'dmca_counter_notices',
-    'response_deadline',
-    // First created NOT NULL, on the reading that a counter-notice always has a
-    // deadline. It does not: the clock starts when the notice is forwarded to the
-    // complainant, and that can fail, so the deadline genuinely may not exist yet.
-    'response_deadline',
-  ],
 ];
 
 /**
@@ -271,10 +244,10 @@ async function connectDB() {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), series uuid NOT NULL REFERENCES series(id), num integer NOT NULL,
       title text NOT NULL, paragraphs jsonb, pages jsonb, views integer NOT NULL DEFAULT 0, is_removed boolean NOT NULL DEFAULT false,
       -- Same role as series.takedown_reason: is_removed says *that* content is
-      -- down, this says *why*. Without it a DMCA counter-notice cannot tell a
-      -- chapter it removed from one an admin or a court order removed since, and
-      -- restoring the first would un-hide the second. Also added by the
-      -- conditional upgrade below, for a table created before this column existed.
+      -- down, this says *why*. Without it a restore cannot tell a chapter taken
+      -- down by one reason from one taken down by another since, and restoring
+      -- the first would un-hide the second. Also added by the conditional
+      -- upgrade below, for a table created before this column existed.
       takedown_reason text,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(series,num)
     );
@@ -294,31 +267,12 @@ async function connectDB() {
       page integer NOT NULL DEFAULT 0, bookmarked boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE("user",series)
     );
-    CREATE TABLE IF NOT EXISTS dmca_reports (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), reporter_name text NOT NULL, reporter_email text NOT NULL,
-      reporter_organization text, reporter_address text, copyrighted_work_description text NOT NULL, original_work_url text,
-      infringing_series uuid REFERENCES series(id), infringing_chapter uuid REFERENCES chapters(id), infringing_url_description text,
-      good_faith_statement boolean NOT NULL, accuracy_statement boolean NOT NULL, signature text NOT NULL,
-      status text NOT NULL DEFAULT 'pending', admin_notes text, resolved_at timestamptz, resolved_by uuid REFERENCES users(id),
-      -- Records that this takedown actually removed something, so a counter-notice
-      -- knows what to restore. is_removed on its own does not say *why* content is
-      -- down. Set when a takedown is accepted, and also added by the conditional
-      -- upgrade below for a table created before these columns existed.
-      removal_series uuid REFERENCES series(id), removal_chapter uuid REFERENCES chapters(id), removal_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    -- One row per (chapter, viewer, window). The UNIQUE constraint is what
-    -- makes view counting idempotent: a repeat read inside the same window
-    -- conflicts and does not increment anything.
     /*
    * Content Policy reports.
    *
-   * Separate from dmca_reports on purpose. A DMCA notice is a copyright claim
-   * carrying statutory weight and sworn statements; a policy report is a house
-   * rule. Keeping them apart stops the two being confused, and stops a policy
-   * report being dismissed because it lacks the elements a takedown notice
-   * needs.
+   * A policy report is a house rule violation. Keeping it separate stops the
+   * report being confused with other intake, and a policy report does not need
+   * sworn statements.
    *
    * Add a partial index for the queue: moderation only ever looks at unresolved
    * rows, and they are a small fraction of the table once it has any history.
@@ -358,58 +312,6 @@ async function connectDB() {
     ) STORED;
 
   CREATE INDEX IF NOT EXISTS idx_series_search ON series USING GIN (search_vector);
-
-  /*
-   * A counter-notice is the alleged infringer's reply to an accepted takedown.
-   *
-   * The three booleans are the statutory statements in 512(g)(3)(A)-(C), each
-   * of which is made under penalty of perjury. They are stored as affirmations
-   * rather than free text so a record cannot exist without them.
-   *
-   * status:
-   *   pending   filed; the complainant has until response_deadline to say
-   *             whether they filed a court action
-   *   contested the complainant notified us that court proceedings began;
-   *             content stays down
-   *   restored  the window lapsed with no court action, so 512(g)(2)(C) permits
-   *             the material to be put back
-   *   withdrawn the subscriber retracted it
-   */
-  CREATE TABLE IF NOT EXISTS dmca_counter_notices (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    dmca_report uuid NOT NULL REFERENCES dmca_reports(id),
-    subscriber_name text NOT NULL,
-    subscriber_email text NOT NULL,
-    subscriber_address text NOT NULL,
-    identified_material text NOT NULL,
-    material_location text NOT NULL,
-    good_faith_statement boolean NOT NULL,
-    perjury_statement boolean NOT NULL,
-    jurisdiction_statement boolean NOT NULL,
-    signature text NOT NULL,
-    status text NOT NULL DEFAULT 'pending',
-    -- Nullable on purpose. 512(g)(2)(A) requires the counter-notice to be
-    -- forwarded to the complainant, and only the day it is forwarded starts
-    -- their 10-to-14 business day clock. If the forward fails there is no
-    -- deadline yet, so this stays null until it succeeds and the notice can be
-    -- re-forwarded rather than being treated as already running.
-    response_deadline timestamptz,
-    forwarded_at timestamptz,
-    forwarded_note text,
-    resolved_at timestamptz,
-    resolved_by uuid REFERENCES users(id),
-    admin_notes text,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-  );
-
-  -- One counter-notice per takedown: a second would restart the clock and let a
-  -- subscriber extend the deadline indefinitely.
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_counter_notice_unique_report
-    ON dmca_counter_notices (dmca_report);
-  -- The restoration sweep looks for lapsed windows.
-  CREATE INDEX IF NOT EXISTS idx_counter_notice_pending
-    ON dmca_counter_notices (status, response_deadline);
 
   CREATE TABLE IF NOT EXISTS view_events (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -488,7 +390,6 @@ async function connectDB() {
     CREATE INDEX IF NOT EXISTS idx_series_genres     ON series USING gin (genres);
     CREATE INDEX IF NOT EXISTS idx_series_tags       ON series USING gin (tags);
     CREATE INDEX IF NOT EXISTS idx_users_library     ON users USING gin (library);
-    CREATE INDEX IF NOT EXISTS idx_dmca_status       ON dmca_reports (status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_view_events_chap  ON view_events (chapter, window_start);
     CREATE INDEX IF NOT EXISTS idx_refresh_user      ON refresh_tokens ("user", expires_at DESC);
     CREATE INDEX IF NOT EXISTS idx_refresh_active    ON refresh_tokens (token_hash) WHERE revoked_at IS NULL;
@@ -538,4 +439,5 @@ module.exports = {
   // up-to-date schema, which is the property that keeps boot lock-free.
   _applyColumnUpgrades: applyColumnUpgrades,
   _columnUpgrades: COLUMN_UPGRADES,
+  NULLABILITY_RELAXATIONS,
 };

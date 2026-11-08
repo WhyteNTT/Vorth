@@ -6,7 +6,7 @@
 const db = require('../src/config/db');
 
 const TABLES = ['users', 'series', 'chapters', 'comments', 'notifications',
-  'reading_progress', 'dmca_reports', 'view_events'];
+  'reading_progress', 'view_events'];
 
 (async () => {
   for (const t of TABLES) {

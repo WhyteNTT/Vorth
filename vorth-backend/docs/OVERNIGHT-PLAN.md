@@ -30,8 +30,8 @@ that were passing while verifying nothing. Those are recorded under
 ## What the phases did not do, and why
 
 - **`src/jobs` is 39% covered.** The cron callbacks only run on a schedule. The
-  counter-notice sweep is exercised by `dmca:sweep-lapsed`; the view-counter resets
-  are not exercised outside a real clock tick. Reported rather than chased.
+  view-counter resets are not exercised outside a real clock tick. Reported
+  rather than chased.
 - **The secrets scanner is not entropy analysis.** It matches credential *shapes*.
   A secret that does not match a known shape would not be found. Stated in the file.
 - **The static ownership check cannot prove enforcement.** Replacing the guard in
@@ -69,8 +69,8 @@ no. Four things the phases had promised and skipped:
 | Area | Finding |
 |---|---|
 | Moderation | `target: 'comment'` removed the chapter **and** series. Each branch excluded only one target, so a moderator removing one comment took down the whole serial. Also, `all` skipped the comment entirely. |
-| `GET /api/reports/:id` | Returned **500, always**. `refFor` maps populate paths through a hand-written table that knew the DMCA controller's field names but not the Content Policy report's `reportedSeries` / `reportedChapter` / `reportedComment`. It had never worked; the route had no test. |
-| Rate limits | Uploads had the **loosest** limit of any expensive route — 60 files × 8 MB per request behind a 300-per-15-minute general limit, which is 144 GB per IP per window onto local disk, with no disk ceiling and no per-user accounting anywhere in the schema. Auth was capped at 20, DMCA at 5. |
+| `GET /api/reports/:id` | Returned **500, always**. `refFor` maps populate paths through a hand-written table that knew the Content Policy report's field names but not the right populate targets. It had never worked; the route had no test. |
+| Rate limits | Uploads had the **loosest** limit of any expensive route — 60 files × 8 MB per request behind a 300-per-15-minute general limit, which is 144 GB per IP per window onto local disk, with no disk ceiling and no per-user accounting anywhere in the schema. Auth was capped at 20. |
 
 ### Guards that were passing while verifying nothing
 
@@ -136,8 +136,3 @@ third attempt's silent SQL error into a named failure.
 
 - **Backend deployment.** Render → New → Blueprint → `WhyteNTT/Vorth`. Needs a
   GitHub OAuth click; no credential-free path exists from here.
-- **DMCA designated agent registration.** A legal filing with the U.S. Copyright
-  Office. Takes days.
-- **Counsel review** of the counter-notice process. The statute is explicit about
-  deadlines and statements, which is why they are implemented. Explicit is not the
-  same as correct for this deployment.

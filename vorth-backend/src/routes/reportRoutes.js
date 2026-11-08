@@ -3,16 +3,10 @@
 /**
  * Content Policy reports.
  *
- * A DMCA notice is a legal instrument with statutory weight; the Content Policy
- * is a house rule. Until this existed the only intake was DMCA, so the documented
- * way to report hate speech or anything else the policy prohibits was to file a
- * copyright claim about it - which is both the wrong instrument and, for a real
- * copyright holder, a way to have the report dismissed as aDMCA misuse.
- *
- * Deliberately lighter than DMCA: no sworn good-faith or accuracy statements, no
- * signature block, and no requirement to identify yourself for the report to be
- * read. A reporter address is still collected so that an author can be told their
- * work was reported and why, which the policy requires.
+ * A house-rule violation report. No sworn good-faith or accuracy statements,
+ * no signature block, and no requirement to identify yourself for the report
+ * to be read. A reporter address is still collected so that an author can be
+ * told their work was reported and why, which the policy requires.
  */
 
 const express = require('express');

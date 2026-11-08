@@ -44,7 +44,7 @@ data.
 - To display your published content to other users.
 - To sync your reading progress and library across sessions.
 - To send you in-app notifications about series you follow.
-- To respond to DMCA takedown notices or Terms of Service violations.
+- To respond to content reports or Terms of Service violations.
 
 ## 4. How we share your data
 
@@ -61,7 +61,7 @@ data.
 
 - Account data is retained until you delete your account.
 - Soft-deleted content (series/chapters/comments removed via
-  moderation or DMCA takedown) is retained internally for a period
+  moderation) is retained internally for a period
   for legal/audit purposes, but is no longer publicly visible.
 - [Specify a concrete retention period once determined — currently
   the implementation retains soft-deleted records indefinitely,
